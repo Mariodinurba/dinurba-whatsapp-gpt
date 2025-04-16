@@ -3,7 +3,6 @@ import express from 'express';
 import axios from 'axios';
 import { ChatGPTAPI } from 'chatgpt';
 import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
 import bodyParser from 'body-parser';
 
 dotenv.config();
@@ -17,10 +16,8 @@ const CHATGPT_MODEL = 'gpt-4';
 
 let db;
 (async () => {
-  db = await open({
-    filename: './conversaciones.db',
-    driver: sqlite3.Database,
-  });
+  db = new sqlite3.Database('./conversaciones.db');
+
   await db.run(`CREATE TABLE IF NOT EXISTS mensajes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     numero TEXT,
