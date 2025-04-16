@@ -1,17 +1,18 @@
 {
   "name": "dinurba-whatsapp-gpt",
   "version": "1.0.0",
-  "main": "servidor.js",
   "type": "module",
+  "main": "servidor.js",
   "scripts": {
     "start": "node servidor.js"
   },
   "dependencies": {
-    "axios": "^1.6.0",
+    "axios": "^1.6.7",
     "body-parser": "^1.20.2",
-    "chatgpt": "^5.2.0",
+    "chatgpt": "^5.3.2",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "sqlite": "^4.2.1",
     "sqlite3": "^5.1.6"
   }
 }
