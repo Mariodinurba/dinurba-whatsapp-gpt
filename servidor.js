@@ -1,3 +1,4 @@
+// servidor.js
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
@@ -44,7 +45,7 @@ app.post('/webhook', async (req, res) => {
     if (messageObject) {
       const rawNumber = messageObject.from;
       const phoneNumber = rawNumber.replace(/^521/, '52');
-      const messageText = messageObject.text?.body;
+      const messageText = messageObject.text?.body || '';
       const timestamp = parseInt(messageObject.timestamp);
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
@@ -59,7 +60,7 @@ app.post('/webhook', async (req, res) => {
 
         const rows = await db.all(
           `SELECT * FROM conversaciones 
-           WHERE numero = ? AND timestamp >= ? 
+           WHERE numero = ? AND rol = 'user' AND timestamp >= ? 
            ORDER BY timestamp DESC LIMIT 30`,
           [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
         );
@@ -74,27 +75,21 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, primerTimestamp]
         );
 
-        const contexto = [...primerosMensajes, ...enviadosPorDinurba].map(m => ({
-          role: m.rol === 'user' ? 'user' : 'assistant',
-          content: m.contenido
-        }));
-
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
 
-        contexto.unshift({
-          role: "system",
-          content:
-            conocimiento.contexto_negocio +
-            "\n\nInstrucciones:\n" +
-            conocimiento.instrucciones_respuesta.join('\n') +
-            "\n\nGuías para atender clientes:\n" +
-            conocimiento.detalles_servicio.join('\n')
-        });
+        const contexto = [
+          {
+            role: 'system',
+            content: conocimiento.prompt_general
+          },
+          ...primerosMensajes.map(m => ({ role: 'user', content: m.contenido })),
+          ...enviadosPorDinurba.map(m => ({ role: 'assistant', content: m.contenido }))
+        ];
 
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
-            model: "gpt-4",
+            model: 'gpt-4',
             messages: contexto
           },
           {
@@ -115,11 +110,9 @@ app.post('/webhook', async (req, res) => {
         await axios.post(
           `https://graph.facebook.com/v18.0/${value.metadata.phone_number_id}/messages`,
           {
-            messaging_product: "whatsapp",
+            messaging_product: 'whatsapp',
             to: phoneNumber,
-            text: {
-              body: "🤖 " + respuesta
-            }
+            text: { body: '🤖 ' + respuesta }
           },
           {
             headers: {
