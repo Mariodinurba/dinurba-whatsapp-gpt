@@ -1,5 +1,6 @@
 const express = require('express');
 const axios = require('axios');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
@@ -8,6 +9,9 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+// Leer conocimiento desde el archivo JSON
+const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf-8'));
 
 app.post('/webhook', async (req, res) => {
   const body = req.body;
@@ -19,8 +23,14 @@ app.post('/webhook', async (req, res) => {
     const messageObject = value?.messages?.[0];
 
     if (messageObject) {
-      const phoneNumber = messageObject.from;
+      let phoneNumber = messageObject.from;
       const messageText = messageObject.text?.body;
+
+      // Ajustar el número si viene con 521 (remover el 1)
+      phoneNumber = phoneNumber.replace(/^521/, '52');
+      if (!phoneNumber.startsWith('+')) {
+        phoneNumber = '+' + phoneNumber;
+      }
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
       console.log("🧾 Objeto completo del mensaje:", JSON.stringify(messageObject, null, 2));
@@ -33,7 +43,7 @@ app.post('/webhook', async (req, res) => {
             messages: [
               {
                 role: "system",
-                content: "Contesta como si fueras un asistente especializado en trámites de deslinde, atención al cliente, cotizaciones y seguimiento de obras en oficina."
+                content: `${conocimiento.instrucciones_sistema} Requisitos para certificar un deslinde: ${conocimiento.certificacion_deslinde.requisitos.join(' ')}`
               },
               {
                 role: "user",
@@ -55,7 +65,7 @@ app.post('/webhook', async (req, res) => {
           `https://graph.facebook.com/v18.0/${value.metadata.phone_number_id}/messages`,
           {
             messaging_product: "whatsapp",
-            to: phoneNumber.replace(/^521/, "52"), // ✅ Fix del número
+            to: phoneNumber,
             text: {
               body: "🤖 " + respuesta
             }
