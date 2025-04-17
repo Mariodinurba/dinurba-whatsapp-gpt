@@ -46,17 +46,8 @@ app.post('/webhook', async (req, res) => {
       const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
-
       const quotedMessage = messageObject?.context?.quoted_message?.text?.body;
-      const quotedFrom = messageObject?.context?.quoted_message?.from;
-      const isQuotedFromDinurba = quotedFrom && quotedFrom !== rawNumber;
-      let contextoCita = '';
-
-      if (quotedMessage) {
-        contextoCita = isQuotedFromDinurba
-          ? `Mensaje citado de Dinurba: "${quotedMessage}"`
-          : `Mensaje citado del cliente: "${quotedMessage}"`;
-      }
+      const quotedSender = messageObject?.context?.quoted_message?.from;
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
@@ -92,13 +83,26 @@ app.post('/webhook', async (req, res) => {
 
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
 
-        const mensajesSistema = conocimiento.map(texto => ({
-          role: "system",
-          content: texto
-        }));
+        const mensajesSistema = [
+          {
+            role: 'system',
+            content: conocimiento.contexto_negocio
+          },
+          ...conocimiento.instrucciones_respuesta.map(instr => ({
+            role: 'system',
+            content: instr
+          }))
+        ];
 
-        if (contextoCita) {
-          contexto.push({ role: 'user', content: contextoCita });
+        if (quotedMessage) {
+          const quien = quotedSender === phoneNumber ? "el usuario ha citado su propio mensaje anterior" : "el usuario ha citado un mensaje anterior enviado por Dinurba";
+          contexto.push({
+            role: 'user',
+            content: `${quien}: "${quotedMessage}"
+Y ha preguntado: "${messageText}"`
+          });
+        } else {
+          contexto.push({ role: 'user', content: messageText });
         }
 
         const respuestaIA = await axios.post(
