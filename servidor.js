@@ -82,8 +82,8 @@ app.post('/webhook', async (req, res) => {
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
 
         contexto.unshift({
-          role: "system",
-          content: conocimiento.join('\n\n')
+            role: "system",
+           content: conocimiento.contexto_negocio + "\n\nInstrucciones:\n" + conocimiento.instrucciones_respuesta.join('\n') + "\n\n" + conocimiento.detalles_servicio.join('\n\n')
         });
 
         const respuestaIA = await axios.post(
