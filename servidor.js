@@ -103,7 +103,12 @@ app.post('/webhook', async (req, res) => {
             const quien = mensajeCitado.rol === 'user' ? 'el cliente' : 'Dinurba';
             citado = {
               role: 'system',
-              content: `El cliente está citando un mensaje anterior de ${quien}, que decía: "${mensajeCitado.contenido}".`
+              content: `El cliente está citando un mensaje anterior de ${quien}, que decía: "${mensajeCitado.contenido}". El cliente ahora escribió: "${messageText}". Responde considerando que el nuevo mensaje hace referencia directa al mensaje citado.`
+            };
+          } else {
+            citado = {
+              role: 'system',
+              content: `El cliente está citando un mensaje anterior, pero no se encontró en el historial. El cliente ahora escribió: "${messageText}". Responde basándote en el nuevo mensaje y el contexto general.`
             };
           }
         }
