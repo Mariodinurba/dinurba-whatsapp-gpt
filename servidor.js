@@ -46,28 +46,22 @@ app.post('/webhook', async (req, res) => {
       const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
-      const quotedMessage = messageObject.context?.quoted_message?.text?.body;
 
-      const mensajeFinal = quotedMessage
-        ? `📎 El cliente citó el mensaje: "${quotedMessage}"
-Mensaje actual: ${messageText}`
-        : messageText;
-
-      console.log("📩 Mensaje recibido de " + phoneNumber + ": " + mensajeFinal);
+      console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
       try {
         const db = await openDB();
 
         await db.run(
           'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-          [phoneNumber, 'user', mensajeFinal, timestamp]
+          [phoneNumber, 'user', messageText, timestamp]
         );
 
         const rows = await db.all(
           `SELECT * FROM conversaciones 
            WHERE numero = ? AND timestamp >= ? 
            ORDER BY timestamp DESC LIMIT 30`,
-          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
+          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6] // 6 meses
         );
 
         const primerosMensajes = rows.reverse();
@@ -89,7 +83,7 @@ Mensaje actual: ${messageText}`
 
         contexto.unshift({
           role: "system",
-          content: conocimiento.contexto_negocio + "\n\nInstrucciones:\n" + conocimiento.instrucciones_respuesta.join('\n')
+          content: conocimiento.join('\n\n')
         });
 
         const respuestaIA = await axios.post(
