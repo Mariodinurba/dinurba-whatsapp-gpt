@@ -28,7 +28,7 @@ app.post('/webhook', async (req, res) => {
       const phoneNumber = messages[0].from;
       const messageText = messages[0].text?.body;
 
-      console.log(“📲 Mensaje recibido de ” + phoneNumber + “: ” + messageText);
+      console.log(`📩 Mensaje recibido de ${phoneNumber}: ${messageText}`);
 
       // Consulta a ChatGPT
       const respuesta = await chatgpt.sendMessage(messageText, {
