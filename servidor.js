@@ -1,74 +1,76 @@
-const express = require('express');
-const axios = require('axios');
+// servidor.js
+import express from 'express';
+import bodyParser from 'body-parser';
+import { ChatGPTAPI } from 'chatgpt';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
 const app = express();
+const port = process.env.PORT || 3000;
 
-app.use(express.json());
+app.use(bodyParser.json());
 
-const VERIFY_TOKEN = "dinurba123"; // El mismo que usaste en la página de Meta
-const WHATSAPP_TOKEN = "EAAJnADpE7ZBgBO2JmgqjJfM40XoEv6ktgr7nfZBQgkanHzn8k5R6SpTB5ZCEEe4zy2ZCKOan4AtkFbTjKSU5CpZC5yXWSXjFQVxzj9ImlV6eJBJZB4bWJeh5NIYDjUhOaLuvJgRZCAOY1pzyXpgnmKsFvYokauFEfPQWgbG6DBmrGMzPstnZCeq9MPio3wtpvsTxjMuLsoDMg42RdKkAouwoljnW"; // <-- Reemplaza esto con tu token temporal
-const PHONE_NUMBER_ID = "559929630545964"; // Este es el ID de número que aparece en Meta
-
-// Verificación de webhook
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-    console.log('🟢 Webhook verificado correctamente.');
-    res.status(200).send(challenge);
-  } else {
-    console.log('🔴 Error al verificar webhook.');
-    res.sendStatus(403);
-  }
+const openai = new ChatGPTAPI({
+  apiKey: process.env.OPENAI_API_KEY
 });
 
-// Recepción de mensajes
+app.get('/', (req, res) => {
+  res.send('🤖 Dinurba WhatsApp Bot está activo.');
+});
+
 app.post('/webhook', async (req, res) => {
-  const body = req.body;
+  try {
+    const entry = req.body.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const messageData = changes?.value?.messages?.[0];
 
-  if (
-    body.object === 'whatsapp_business_account' &&
-    body.entry &&
-    body.entry[0].changes &&
-    body.entry[0].changes[0].value.messages
-  ) {
-    const message = body.entry[0].changes[0].value.messages[0];
-    const from = message.from; // Número del usuario que envió el mensaje
-    const msgBody = message.text?.body;
-
-    console.log(`📩 Mensaje recibido de ${from}: ${msgBody}`);
-
-    // Enviar respuesta automática
-    try {
-      await axios({
-        method: 'POST',
-        url: `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
-        headers: {
-          'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        data: {
-          messaging_product: 'whatsapp',
-          to: from,
-          type: 'text',
-          text: { body: '🤖 Hola, gracias por escribir a Dinurba. En breve te atenderemos.' }
-        }
-      });
-
-      console.log('✅ Respuesta enviada');
-    } catch (error) {
-      console.error('❌ Error al enviar mensaje:', error.response?.data || error.message);
+    if (!messageData) {
+      return res.sendStatus(200);
     }
 
-    res.sendStatus(200);
-  } else {
-    res.sendStatus(404);
+    const from = messageData.from;
+    const userMessage = messageData.text?.body;
+
+    console.log(`📩 Mensaje recibido de ${from}: ${userMessage}`);
+
+    // Generar respuesta con IA
+    const respuestaIA = await openai.sendMessage(
+      `Eres el asistente virtual de la empresa Dinurba. Tu trabajo es responder SOLO sobre los servicios de la empresa, trámites, cotizaciones, citas y dudas de clientes. NO respondas preguntas generales que no estén relacionadas con Dinurba. El cliente escribió: ${userMessage}`
+    );
+
+    await enviarMensajeWhatsApp(from, respuestaIA.text);
+
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error('❌ Error en /webhook:', error);
+    return res.sendStatus(500);
   }
 });
 
-// Puerto para Railway
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
+async function enviarMensajeWhatsApp(to, text) {
+  const url = 'https://graph.facebook.com/v17.0/' + process.env.PHONE_NUMBER_ID + '/messages';
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'text',
+      text: { body: `🤖 ${text}` }
+    })
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    console.error('❌ Error enviando mensaje a WhatsApp:', error);
+  }
+}
+
+app.listen(port, () => {
+  console.log(`🚀 Servidor corriendo en el puerto ${port}`);
 });
