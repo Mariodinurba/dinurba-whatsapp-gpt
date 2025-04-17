@@ -7,11 +7,16 @@
     "No expliques más de lo necesario. Si el cliente quiere más detalles, él los pedirá.",
     "Si el cliente pregunta por requisitos, ya puedes explicarlos.",
     "Si solo pregunta si ofrecemos el servicio, responde con un 'sí' claro y amable, sin dar requisitos.",
-    "No uses emojis en ninguna respuesta."
+    "No uses emojis en ninguna respuesta. El sistema los agrega automáticamente."
   ],
   "respuestas_base": {
-    "deslinde": "Sí, realizamos trámites de deslinde.",
+    "deslinde": "Sí, realizamos trámites de deslinde. ¿En qué podemos ayudarte?",
     "requisitos_deslinde": "Para iniciar un deslinde se necesita: predial pagado, solicitud firmada por el propietario o representante legal, copia de identificación oficial mexicana, y si firma un representante legal, también su documento legal (poder, compraventa, sentencia, etc.).",
     "requisitos": "Para iniciar un deslinde se necesita: predial pagado, solicitud firmada por el propietario o representante legal, copia de identificación oficial mexicana, y si firma un representante legal, también su documento legal (poder, compraventa, sentencia, etc.)."
+  },
+  "validacion_clave_catastral": {
+    "al_dar_clave_directa": "Cuando el cliente proporciona directamente la clave catastral, el sistema debe obtener la dirección asociada a esa clave y preguntarle al cliente si corresponde al predio que desea deslindar. Esto es necesario porque algunas claves pueden ser incorrectas o corresponder a otro predio.",
+    "cuando_recibo_agua": "Cuando el cliente proporciona el recibo del agua, el sistema puede obtener la clave catastral de ahí, pero debe advertir al cliente que la clave del agua puede no ser confiable. Luego debe mostrar la dirección asociada a esa clave y confirmar con el cliente si es la correcta.",
+    "cuando_recibo_predial": "Cuando el cliente proporciona el recibo del predial, es más confiable, pero igualmente se debe confirmar la dirección con el cliente para evitar errores."
   }
 }
