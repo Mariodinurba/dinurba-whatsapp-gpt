@@ -22,8 +22,10 @@ app.post('/webhook', async (req, res) => {
       let phoneNumber = messageObject.from;
       const messageText = messageObject.text?.body;
 
-      // Asegurar que el número tenga el signo +
-      if (!phoneNumber.startsWith('+')) {
+      // 👇 Corrección del número de teléfono
+      if (phoneNumber.startsWith('1') && phoneNumber.length === 12) {
+        phoneNumber = '+' + phoneNumber.slice(1);
+      } else if (!phoneNumber.startsWith('+')) {
         phoneNumber = '+' + phoneNumber;
       }
 
