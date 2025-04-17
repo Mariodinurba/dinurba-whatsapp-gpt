@@ -12,7 +12,7 @@ app.use(bodyParser.json());
 
 const VERIFY_TOKEN = 'dinurba123';
 const WHATSAPP_API_URL = 'https://graph.facebook.com/v17.0';
-const PHONE_NUMBER_ID = '559929683645964';
+const PHONE_NUMBER_ID = '559992063645964';
 const CHATGPT_MODEL = 'gpt-4';
 
 let db;
@@ -37,8 +37,7 @@ async function obtenerHistorial(numero) {
   const mensajes = await db.all(`
     SELECT rol, mensaje FROM mensajes 
     WHERE numero = ? AND fecha >= datetime('now', '-6 months') 
-    ORDER BY fecha DESC 
-    LIMIT 30
+    ORDER BY fecha DESC LIMIT 30
   `, [numero]);
   return mensajes.reverse();
 }
@@ -47,19 +46,16 @@ async function guardarMensaje(numero, mensaje, rol) {
   await db.run(`INSERT INTO mensajes (numero, mensaje, rol) VALUES (?, ?, ?)`, [numero, mensaje, rol]);
 }
 
-// ✅ Endpoint para verificar el Webhook de Meta
+// ✅ Este es el endpoint que Meta necesita para verificar el webhook
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode && token) {
-    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-      console.log('✅ Webhook verificado!');
-      res.status(200).send(challenge);
-    } else {
-      res.status(403).send('❌ Token inválido');
-    }
+  if (mode && token === VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  } else {
+    return res.sendStatus(403);
   }
 });
 
@@ -76,7 +72,7 @@ app.post('/webhook', async (req, res) => {
     const historial = await obtenerHistorial(numero);
 
     const respuestaIA = await chatgpt.sendMessage(texto, {
-      messages: historial.map((m) => ({ role: m.rol, content: m.mensaje })),
+      messages: historial.map(m => ({ role: m.rol, content: m.mensaje })),
       systemMessage: 'Responde solo preguntas relacionadas con los servicios de Dinurba. No hables de temas generales. Las respuestas deben ser claras y útiles para clientes reales.',
       model: CHATGPT_MODEL,
     });
@@ -101,5 +97,5 @@ app.post('/webhook', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor escuchando en el puerto ${PORT}`);
+  console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
 });
