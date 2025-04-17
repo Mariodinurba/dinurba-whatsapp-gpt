@@ -25,8 +25,7 @@ const openDB = async () => {
       numero TEXT,
       rol TEXT,
       contenido TEXT,
-      timestamp INTEGER,
-      mensaje_id TEXT
+      timestamp INTEGER
     )
   `);
 
@@ -45,28 +44,32 @@ app.post('/webhook', async (req, res) => {
     if (messageObject) {
       const rawNumber = messageObject.from;
       const phoneNumber = rawNumber.replace(/^521/, '52');
-      const messageText = messageObject.text?.body;
+      const messageText = messageObject.text?.body || '';
       const timestamp = parseInt(messageObject.timestamp);
-      const messageId = messageObject.id;
-      const quotedMessageId = messageObject?.context?.id;
 
-      console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
+      const citedMessageText = messageObject.context?.quotedMessage?.extendedTextMessage?.text ||
+                               messageObject.context?.quotedMessage?.conversation;
+
+      const isCiting = !!citedMessageText;
+      const citado = isCiting ? `[Mensaje citado: ${citedMessageText}] ` : '';
+
+      const textoCompleto = citado + messageText;
+
+      console.log("📩 Mensaje recibido de " + phoneNumber + ": " + textoCompleto);
 
       try {
         const db = await openDB();
 
         await db.run(
-          'INSERT INTO conversaciones (numero, rol, contenido, timestamp, mensaje_id) VALUES (?, ?, ?, ?, ?)',
-          [phoneNumber, 'user', messageText, timestamp, messageId]
+          'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
+          [phoneNumber, 'user', textoCompleto, timestamp]
         );
-
-        const seisMesesAntes = Date.now() / 1000 - 60 * 60 * 24 * 30 * 6;
 
         const rows = await db.all(
           `SELECT * FROM conversaciones 
            WHERE numero = ? AND timestamp >= ? 
            ORDER BY timestamp DESC LIMIT 30`,
-          [phoneNumber, seisMesesAntes]
+          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
         );
 
         const primerosMensajes = rows.reverse();
@@ -84,28 +87,13 @@ app.post('/webhook', async (req, res) => {
           content: m.contenido
         }));
 
-        // Agregar mensaje citado si existe
-        if (quotedMessageId) {
-          const citado = await db.get(
-            `SELECT rol, contenido FROM conversaciones WHERE mensaje_id = ?`,
-            [quotedMessageId]
-          );
-
-          if (citado) {
-            const autor = citado.rol === 'user' ? 'el usuario citó su propio mensaje' : 'el usuario citó un mensaje enviado por Dinurba';
-            contexto.unshift({
-              role: 'system',
-              content: `${autor}: "${citado.contenido}"`
-            });
-          }
-        }
-
-        // Cargar conocimiento
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
 
-        contexto.unshift({
-          role: "system",
-          content: conocimiento.join("\n")
+        conocimiento.conocimiento.forEach(instruccion => {
+          contexto.unshift({
+            role: "system",
+            content: instruccion
+          });
         });
 
         const respuestaIA = await axios.post(
