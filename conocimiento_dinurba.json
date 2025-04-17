@@ -1,0 +1,11 @@
+{
+  "instrucciones_sistema": "Contesta como si fueras un asistente especializado en trámites de deslinde, atención al cliente, cotizaciones y seguimiento de obras en oficina.",
+  "certificacion_deslinde": {
+    "requisitos": [
+      "El predial debe estar pagado (no se requiere recibo, solo que esté pagado).",
+      "Solicitud de deslinde firmada por el propietario o representante legal.",
+      "Copia de una identificación oficial mexicana: INE, pasaporte mexicano, licencia de conducir, matrícula consular u otra identificación oficial.",
+      "Si firma un representante legal, debe presentar su identificación oficial y un documento que lo acredite como representante legal, como: poder notarial, contrato de compraventa privado, sentencia o nombramiento de albacea."
+    ]
+  }
+}
