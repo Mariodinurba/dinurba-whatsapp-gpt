@@ -1,68 +1,91 @@
-// servidor.js actualizado para que funcione con Meta + ChatGPT
-
 const express = require('express');
-const bodyParser = require('body-parser');
-const fetch = require('node-fetch');
-const { ChatGPTAPI } = require('chatgpt');
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+app.use(express.json());
 
+const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-const chatgpt = new ChatGPTAPI({ apiKey: OPENAI_API_KEY });
-
-app.use(bodyParser.json());
-
-// Ruta para recibir mensajes de WhatsApp
 app.post('/webhook', async (req, res) => {
-  try {
-    const entry = req.body.entry?.[0];
+  const body = req.body;
+
+  if (body.object) {
+    const entry = body.entry?.[0];
     const changes = entry?.changes?.[0];
-    const messages = changes?.value?.messages;
+    const value = changes?.value;
+    const messageObject = value?.messages?.[0];
 
-    if (messages && messages[0]) {
-      const phoneNumber = messages[0].from;
-      const messageText = messages[0].text?.body;
+    if (messageObject) {
+      const phoneNumber = messageObject.from;
+      const messageText = messageObject.text?.body;
 
-      console.log(`📩 Mensaje recibido de ${phoneNumber}: ${messageText}`);
+      console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
-      // Consulta a ChatGPT
-      const respuesta = await chatgpt.sendMessage(messageText, {
-        systemMessage: "Eres un asistente de Dinurba. Responde con claridad y solo temas relacionados al negocio."
-      });
+      try {
+        const respuestaIA = await axios.post(
+          'https://api.openai.com/v1/chat/completions',
+          {
+            model: "gpt-4",
+            messages: [
+              {
+                role: "system",
+                content: "Contesta como si fueras un asistente especializado en trámites de deslinde, atención al cliente, cotizaciones y seguimiento de obras en oficina."
+              },
+              {
+                role: "user",
+                content: messageText
+              }
+            ]
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${OPENAI_API_KEY}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
 
-      await fetch(`https://graph.facebook.com/v17.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          to: phoneNumber,
-          text: { body: `🤖 ${respuesta.text}` }
-        })
-      });
+        const respuesta = respuestaIA.data.choices[0].message.content;
+
+        await axios.post(
+          `https://graph.facebook.com/v18.0/${value.metadata.phone_number_id}/messages`,
+          {
+            messaging_product: "whatsapp",
+            to: phoneNumber,
+            text: {
+              body: "🤖 " + respuesta
+            }
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        console.log("✅ Respuesta enviada a WhatsApp.");
+      } catch (error) {
+        console.error("❌ Error enviando mensaje a WhatsApp o generando respuesta de IA:", error.response?.data || error.message);
+      }
     }
-    res.sendStatus(200);
-  } catch (err) {
-    console.error('Error en webhook:', err);
-    res.sendStatus(500);
+
+    return res.sendStatus(200);
+  } else {
+    res.sendStatus(404);
   }
 });
 
-// Verificación del webhook de Meta
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode === 'subscribe' && token === process.env.WHATSAPP_TOKEN) {
-    console.log('✅ Webhook verificado');
+  if (mode && token && token === process.env.VERIFY_TOKEN) {
+    console.log("✅ Webhook verificado.");
     res.status(200).send(challenge);
   } else {
     res.sendStatus(403);
