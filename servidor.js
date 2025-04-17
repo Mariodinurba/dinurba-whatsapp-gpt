@@ -1,4 +1,4 @@
-// servidor.js
+// servidor.js restaurado
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
@@ -71,14 +71,14 @@ app.post('/webhook', async (req, res) => {
           ? ultimosMensajesCliente[ultimosMensajesCliente.length - 1].timestamp
           : timestamp;
 
-        const mensajesDinurba = await db.all(
+        const mensajesRecientes = await db.all(
           `SELECT * FROM conversaciones 
-           WHERE numero = ? AND rol = 'dinurba' AND timestamp >= ?
+           WHERE numero = ? AND timestamp >= ?
            ORDER BY timestamp ASC`,
           [phoneNumber, primerMensajeTimestamp]
         );
 
-        const contexto = [...ultimosMensajesCliente.reverse(), ...mensajesDinurba].map(m => ({
+        const contexto = mensajesRecientes.map(m => ({
           role: m.rol === 'user' ? 'user' : 'assistant',
           content: m.contenido
         }));
@@ -87,7 +87,7 @@ app.post('/webhook', async (req, res) => {
 
         contexto.unshift({
           role: "system",
-          content: conocimiento.contexto_negocio + "\n\nInstrucciones:\n" + conocimiento.instrucciones_respuesta.join('\n')
+          content: conocimiento.contexto_negocio.join('\n') + "\n\nInstrucciones:\n" + conocimiento.instrucciones_respuesta.join('\n')
         });
 
         const respuestaIA = await axios.post(
