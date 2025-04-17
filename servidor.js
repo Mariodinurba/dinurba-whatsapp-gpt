@@ -19,18 +19,11 @@ app.post('/webhook', async (req, res) => {
     const messageObject = value?.messages?.[0];
 
     if (messageObject) {
-      let phoneNumber = messageObject.from;
+      const phoneNumber = messageObject.from;
       const messageText = messageObject.text?.body;
 
-      // 👇 Corrección del número de teléfono
-      if (phoneNumber.startsWith('1') && phoneNumber.length === 12) {
-        phoneNumber = '+' + phoneNumber.slice(1);
-      } else if (!phoneNumber.startsWith('+')) {
-        phoneNumber = '+' + phoneNumber;
-      }
-
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
-      console.log("🧾 objeto completo del mensaje:", JSON.stringify(messageObject, null, 2));
+      console.log("🧾 Objeto completo del mensaje:", JSON.stringify(messageObject, null, 2));
 
       try {
         const respuestaIA = await axios.post(
@@ -62,7 +55,7 @@ app.post('/webhook', async (req, res) => {
           `https://graph.facebook.com/v18.0/${value.metadata.phone_number_id}/messages`,
           {
             messaging_product: "whatsapp",
-            to: phoneNumber,
+            to: phoneNumber.replace(/^521/, "52"), // ✅ Fix del número
             text: {
               body: "🤖 " + respuesta
             }
