@@ -1,3 +1,4 @@
+// servidor.js
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
@@ -57,24 +58,27 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, 'user', messageText, timestamp]
         );
 
-        const rows = await db.all(
+        const seisMesesAtras = Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 30 * 6;
+
+        const ultimosMensajesCliente = await db.all(
           `SELECT * FROM conversaciones 
-           WHERE numero = ? AND timestamp >= ? 
+           WHERE numero = ? AND rol = 'user' AND timestamp >= ?
            ORDER BY timestamp DESC LIMIT 30`,
-          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
+          [phoneNumber, seisMesesAtras]
         );
 
-        const primerosMensajes = rows.reverse();
-        const primerTimestamp = primerosMensajes[0]?.timestamp || 0;
+        const primerMensajeTimestamp = ultimosMensajesCliente.length
+          ? ultimosMensajesCliente[ultimosMensajesCliente.length - 1].timestamp
+          : timestamp;
 
-        const enviadosPorDinurba = await db.all(
+        const mensajesDinurba = await db.all(
           `SELECT * FROM conversaciones 
            WHERE numero = ? AND rol = 'dinurba' AND timestamp >= ?
            ORDER BY timestamp ASC`,
-          [phoneNumber, primerTimestamp]
+          [phoneNumber, primerMensajeTimestamp]
         );
 
-        const contexto = [...primerosMensajes, ...enviadosPorDinurba].map(m => ({
+        const contexto = [...ultimosMensajesCliente.reverse(), ...mensajesDinurba].map(m => ({
           role: m.rol === 'user' ? 'user' : 'assistant',
           content: m.contenido
         }));
@@ -83,7 +87,7 @@ app.post('/webhook', async (req, res) => {
 
         contexto.unshift({
           role: "system",
-          content: conocimiento.contexto_negocio.join('\n') + "\n\nInstrucciones:\n" + conocimiento.instrucciones_respuesta.join('\n')
+          content: conocimiento.contexto_negocio + "\n\nInstrucciones:\n" + conocimiento.instrucciones_respuesta.join('\n')
         });
 
         const respuestaIA = await axios.post(
@@ -104,7 +108,7 @@ app.post('/webhook', async (req, res) => {
 
         await db.run(
           'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-          [phoneNumber, 'dinurba', respuesta, Date.now() / 1000]
+          [phoneNumber, 'dinurba', respuesta, Math.floor(Date.now() / 1000)]
         );
 
         await axios.post(
@@ -126,7 +130,7 @@ app.post('/webhook', async (req, res) => {
 
         console.log("✅ Respuesta enviada a WhatsApp.");
       } catch (error) {
-        console.error("❌ Error enviando mensaje a WhatsApp o generando respuesta de IA:", error.response?.data || error.message);
+        console.error("❌ Error en el proceso:", error.response?.data || error.message);
       }
     }
 
