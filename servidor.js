@@ -10,7 +10,7 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // Tu número real (sin el +), como string:
-const MI_NUMERO = "5216861707494";
+const MI_NUMERO = "+5216861707494";
 
 app.post('/webhook', async (req, res) => {
   const body = req.body;
