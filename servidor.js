@@ -12,11 +12,12 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
 const openDB = async () => {
   const db = await open({
     filename: './conversaciones.db',
-    driver: sqlite3.Database
+    driver: sqlite3.Database,
   });
 
   await db.exec(`
@@ -32,6 +33,18 @@ const openDB = async () => {
   return db;
 };
 
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode && token && token === VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  } else {
+    return res.sendStatus(403);
+  }
+});
+
 app.post('/webhook', async (req, res) => {
   const body = req.body;
 
@@ -42,60 +55,55 @@ app.post('/webhook', async (req, res) => {
     const messageObject = value?.messages?.[0];
 
     if (messageObject) {
-      const db = await openDB();
-      let phoneNumber = messageObject.from;
-      if (phoneNumber.startsWith('521')) {
-        phoneNumber = '52' + phoneNumber.substring(3);
-      }
-
+      const rawNumber = messageObject.from;
+      const phoneNumber = rawNumber.replace(/^52\s*1(?=\d{10}$)/, '521');
       const messageText = messageObject.text?.body;
-      const timestamp = Date.now();
+      const timestamp = parseInt(messageObject.timestamp) * 1000;
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
-      // Guardar mensaje del cliente
-      await db.run(
-        'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-        phoneNumber, 'user', messageText, timestamp
-      );
-
-      // Obtener los últimos 30 mensajes del cliente en los últimos 6 meses
-      const seisMesesAtras = Date.now() - 1000 * 60 * 60 * 24 * 30 * 6;
-      const mensajesCliente = await db.all(
-        'SELECT * FROM conversaciones WHERE numero = ? AND rol = ? AND timestamp >= ? ORDER BY timestamp ASC',
-        phoneNumber, 'user', seisMesesAtras
-      );
-
-      const ultimos30 = mensajesCliente.slice(-30);
-      const primerTimestamp = ultimos30.length > 0 ? ultimos30[0].timestamp : 0;
-
-      // Obtener todos los mensajes posteriores a ese punto (cliente + Dinurba)
-      const mensajesContexto = await db.all(
-        'SELECT * FROM conversaciones WHERE numero = ? AND timestamp >= ? ORDER BY timestamp ASC',
-        phoneNumber, primerTimestamp
-      );
-
-      // Cargar conocimiento
-      const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
-
-      const contexto = [
-        { role: 'system', content: conocimiento.contexto_negocio },
-        ...conocimiento.instrucciones_respuesta.map(inst => ({ role: 'system', content: inst })),
-        ...mensajesContexto.map(m => {
-          const rol = m.rol;
-          const content = m.rol === 'assistant' && !m.content.startsWith('🤖')
-            ? `Mensaje enviado por personal de Dinurba: ${m.content}`
-            : m.content;
-          return { role: rol, content: content };
-        })
-      ];
-
       try {
+        const db = await openDB();
+
+        await db.run(
+          'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
+          [phoneNumber, 'user', messageText, timestamp]
+        );
+
+        const seisMesesAtras = Date.now() - 15778463000; // 6 meses
+        const mensajesCliente = await db.all(
+          'SELECT * FROM conversaciones WHERE numero = ? AND rol = ? AND timestamp >= ? ORDER BY timestamp DESC LIMIT 30',
+          [phoneNumber, 'user', seisMesesAtras]
+        );
+
+        let historial = mensajesCliente;
+
+        if (mensajesCliente.length > 0) {
+          const timestampReferencia = mensajesCliente[mensajesCliente.length - 1].timestamp;
+          const mensajesDinurba = await db.all(
+            'SELECT * FROM conversaciones WHERE numero = ? AND rol = ? AND timestamp >= ? ORDER BY timestamp ASC',
+            [phoneNumber, 'assistant', timestampReferencia]
+          );
+          historial = [...mensajesCliente, ...mensajesDinurba];
+        }
+
+        const mensajesFormateados = historial.map(m => ({
+          role: m.rol,
+          content: m.contenido.replace(/^🤖 /, '')
+        }));
+
+        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
+
+        mensajesFormateados.unshift({
+          role: 'system',
+          content: `${conocimiento.contexto_negocio}\n${conocimiento.instrucciones_respuesta.join('\n')}`
+        });
+
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
             model: 'gpt-4',
-            messages: contexto
+            messages: mensajesFormateados,
           },
           {
             headers: {
@@ -107,19 +115,17 @@ app.post('/webhook', async (req, res) => {
 
         const respuesta = respuestaIA.data.choices[0].message.content;
 
-        // Guardar respuesta de IA
         await db.run(
           'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-          phoneNumber, 'assistant', respuesta, Date.now()
+          [phoneNumber, 'assistant', respuesta, Date.now()]
         );
 
-        // Enviar respuesta a WhatsApp
         await axios.post(
           `https://graph.facebook.com/v18.0/${value.metadata.phone_number_id}/messages`,
           {
             messaging_product: 'whatsapp',
-            to: '+' + phoneNumber,
-            text: { body: '🤖 ' + respuesta }
+            to: phoneNumber,
+            text: { body: `🤖 ${respuesta}` }
           },
           {
             headers: {
@@ -134,22 +140,10 @@ app.post('/webhook', async (req, res) => {
         console.error("❌ Error enviando mensaje a WhatsApp o generando respuesta de IA:", error.response?.data || error.message);
       }
     }
-    return res.sendStatus(200);
+
+    res.sendStatus(200);
   } else {
     res.sendStatus(404);
-  }
-});
-
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode && token && token === process.env.VERIFY_TOKEN) {
-    console.log("✅ Webhook verificado.");
-    res.status(200).send(challenge);
-  } else {
-    res.sendStatus(403);
   }
 });
 
