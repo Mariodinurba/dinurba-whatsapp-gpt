@@ -1,4 +1,3 @@
-// servidor.js restaurado
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
@@ -47,38 +46,41 @@ app.post('/webhook', async (req, res) => {
       const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
+      const quotedMessage = messageObject.context?.quoted_message?.text?.body;
 
-      console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
+      const mensajeFinal = quotedMessage
+        ? `📎 El cliente citó el mensaje: "${quotedMessage}"
+Mensaje actual: ${messageText}`
+        : messageText;
+
+      console.log("📩 Mensaje recibido de " + phoneNumber + ": " + mensajeFinal);
 
       try {
         const db = await openDB();
 
         await db.run(
           'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-          [phoneNumber, 'user', messageText, timestamp]
+          [phoneNumber, 'user', mensajeFinal, timestamp]
         );
 
-        const seisMesesAtras = Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 30 * 6;
-
-        const ultimosMensajesCliente = await db.all(
+        const rows = await db.all(
           `SELECT * FROM conversaciones 
-           WHERE numero = ? AND rol = 'user' AND timestamp >= ?
+           WHERE numero = ? AND timestamp >= ? 
            ORDER BY timestamp DESC LIMIT 30`,
-          [phoneNumber, seisMesesAtras]
+          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
         );
 
-        const primerMensajeTimestamp = ultimosMensajesCliente.length
-          ? ultimosMensajesCliente[ultimosMensajesCliente.length - 1].timestamp
-          : timestamp;
+        const primerosMensajes = rows.reverse();
+        const primerTimestamp = primerosMensajes[0]?.timestamp || 0;
 
-        const mensajesRecientes = await db.all(
+        const enviadosPorDinurba = await db.all(
           `SELECT * FROM conversaciones 
-           WHERE numero = ? AND timestamp >= ?
+           WHERE numero = ? AND rol = 'dinurba' AND timestamp >= ?
            ORDER BY timestamp ASC`,
-          [phoneNumber, primerMensajeTimestamp]
+          [phoneNumber, primerTimestamp]
         );
 
-        const contexto = mensajesRecientes.map(m => ({
+        const contexto = [...primerosMensajes, ...enviadosPorDinurba].map(m => ({
           role: m.rol === 'user' ? 'user' : 'assistant',
           content: m.contenido
         }));
@@ -87,7 +89,7 @@ app.post('/webhook', async (req, res) => {
 
         contexto.unshift({
           role: "system",
-          content: conocimiento.contexto_negocio.join('\n') + "\n\nInstrucciones:\n" + conocimiento.instrucciones_respuesta.join('\n')
+          content: conocimiento.contexto_negocio + "\n\nInstrucciones:\n" + conocimiento.instrucciones_respuesta.join('\n')
         });
 
         const respuestaIA = await axios.post(
@@ -108,7 +110,7 @@ app.post('/webhook', async (req, res) => {
 
         await db.run(
           'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-          [phoneNumber, 'dinurba', respuesta, Math.floor(Date.now() / 1000)]
+          [phoneNumber, 'dinurba', respuesta, Date.now() / 1000]
         );
 
         await axios.post(
@@ -130,7 +132,7 @@ app.post('/webhook', async (req, res) => {
 
         console.log("✅ Respuesta enviada a WhatsApp.");
       } catch (error) {
-        console.error("❌ Error en el proceso:", error.response?.data || error.message);
+        console.error("❌ Error enviando mensaje a WhatsApp o generando respuesta de IA:", error.response?.data || error.message);
       }
     }
 
