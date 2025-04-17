@@ -12,7 +12,7 @@ app.use(bodyParser.json());
 
 const VERIFY_TOKEN = 'dinurba123';
 const WHATSAPP_API_URL = 'https://graph.facebook.com/v17.0';
-const PHONE_NUMBER_ID = '559992063645964';
+const PHONE_NUMBER_ID = '559929636459964';
 const CHATGPT_MODEL = 'gpt-4';
 
 let db;
@@ -34,31 +34,35 @@ let db;
 const chatgpt = new ChatGPTAPI({ apiKey: process.env.OPENAI_API_KEY });
 
 async function obtenerHistorial(numero) {
-  const mensajes = await db.all(`
-    SELECT rol, mensaje FROM mensajes 
-    WHERE numero = ? AND fecha >= datetime('now', '-6 months') 
-    ORDER BY fecha DESC LIMIT 30
-  `, [numero]);
+  const mensajes = await db.all(
+    `SELECT rol, mensaje FROM mensajes WHERE numero = ? AND fecha >= datetime('now', '-6 months') ORDER BY fecha DESC LIMIT 30`,
+    [numero]
+  );
   return mensajes.reverse();
 }
 
 async function guardarMensaje(numero, mensaje, rol) {
-  await db.run(`INSERT INTO mensajes (numero, mensaje, rol) VALUES (?, ?, ?)`, [numero, mensaje, rol]);
+  await db.run(
+    `INSERT INTO mensajes (numero, mensaje, rol) VALUES (?, ?, ?)`,
+    [numero, mensaje, rol]
+  );
 }
 
-// ✅ Este es el endpoint que Meta necesita para verificar el webhook
+// === VALIDACIÓN DE WEBHOOK ===
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode && token === VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    console.log('🟢 Webhook verificado correctamente');
+    res.status(200).send(challenge);
   } else {
-    return res.sendStatus(403);
+    res.sendStatus(403);
   }
 });
 
+// === RECEPCIÓN DE MENSAJES ===
 app.post('/webhook', async (req, res) => {
   const entry = req.body.entry?.[0];
   const cambios = entry?.changes?.[0]?.value;
@@ -72,24 +76,28 @@ app.post('/webhook', async (req, res) => {
     const historial = await obtenerHistorial(numero);
 
     const respuestaIA = await chatgpt.sendMessage(texto, {
-      messages: historial.map(m => ({ role: m.rol, content: m.mensaje })),
-      systemMessage: 'Responde solo preguntas relacionadas con los servicios de Dinurba. No hables de temas generales. Las respuestas deben ser claras y útiles para clientes reales.',
+      messages: historial.map((m) => ({ role: m.rol, content: m.mensaje })),
+      systemMessage: 'Responde solo preguntas relacionadas con los servicios de Dinurba. No hables de temas generales.',
       model: CHATGPT_MODEL,
     });
 
     const respuesta = '🤖 ' + respuestaIA.text;
     await guardarMensaje(numero, respuesta, 'assistant');
 
-    await axios.post(`${WHATSAPP_API_URL}/${PHONE_NUMBER_ID}/messages`, {
-      messaging_product: 'whatsapp',
-      to: numero,
-      text: { body: respuesta },
-    }, {
-      headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json',
+    await axios.post(
+      `${WHATSAPP_API_URL}/${PHONE_NUMBER_ID}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: numero,
+        text: { body: respuesta },
       },
-    });
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
   }
 
   res.sendStatus(200);
@@ -97,5 +105,5 @@ app.post('/webhook', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
+  console.log(`🚀 Servidor escuchando en el puerto ${PORT}`);
 });
