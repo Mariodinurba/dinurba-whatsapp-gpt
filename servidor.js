@@ -12,7 +12,6 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
 const openDB = async () => {
   const db = await open({
@@ -45,10 +44,10 @@ app.post('/webhook', async (req, res) => {
     if (messageObject) {
       const rawNumber = messageObject.from;
       const phoneNumber = rawNumber.replace(/^521/, '52');
-      const messageText = messageObject.text?.body || '';
+      const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
-      const quotedMessage = messageObject.context?.quoted_message?.text?.body || null;
-      const quotedFrom = messageObject.context?.quoted_message?.from || null;
+      const quotedMessage = messageObject.context?.quotedMessage?.extendedTextMessage?.text ||
+                            messageObject.context?.quotedMessage?.conversation;
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
@@ -60,45 +59,46 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, 'user', messageText, timestamp]
         );
 
-        const seisMesesAntes = Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 30 * 6;
-        const mensajesUsuario = await db.all(
-          `SELECT * FROM conversaciones
-           WHERE numero = ? AND rol = 'user' AND timestamp >= ?
+        const rows = await db.all(
+          `SELECT * FROM conversaciones 
+           WHERE numero = ? AND timestamp >= ? 
            ORDER BY timestamp DESC LIMIT 30`,
-          [phoneNumber, seisMesesAntes]
+          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
         );
 
-        const primerosMensajes = mensajesUsuario.reverse();
+        const primerosMensajes = rows.reverse();
         const primerTimestamp = primerosMensajes[0]?.timestamp || 0;
 
         const enviadosPorDinurba = await db.all(
-          `SELECT * FROM conversaciones
+          `SELECT * FROM conversaciones 
            WHERE numero = ? AND rol = 'dinurba' AND timestamp >= ?
            ORDER BY timestamp ASC`,
           [phoneNumber, primerTimestamp]
         );
 
-        const contexto = [...primerosMensajes, ...enviadosPorDinurba].map(m => ({
-          role: m.rol === 'user' ? 'user' : 'assistant',
-          content: m.contenido
-        }));
-
-        if (quotedMessage) {
-          const autor = quotedFrom === value.metadata.phone_number_id ? 'Dinurba' : 'cliente';
-          contexto.push({
-            role: 'system',
-            content: `Mensaje citado (${autor}): ${quotedMessage}`
-          });
-        }
-
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
 
-        conocimiento.forEach(p => {
-          contexto.unshift({
+        const contexto = [
+          {
             role: "system",
-            content: p
+            content: conocimiento.join('\n')
+          },
+          ...primerosMensajes.map(m => ({
+            role: m.rol === 'user' ? 'user' : 'assistant',
+            content: m.contenido
+          })),
+          ...enviadosPorDinurba.map(m => ({
+            role: 'assistant',
+            content: m.contenido
+          }))
+        ];
+
+        if (quotedMessage) {
+          contexto.push({
+            role: 'user',
+            content: `🧾 El cliente citó este mensaje: "${quotedMessage}"`
           });
-        });
+        }
 
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
@@ -118,7 +118,7 @@ app.post('/webhook', async (req, res) => {
 
         await db.run(
           'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-          [phoneNumber, 'dinurba', respuesta, Math.floor(Date.now() / 1000)]
+          [phoneNumber, 'dinurba', respuesta, Date.now() / 1000]
         );
 
         await axios.post(
@@ -155,7 +155,7 @@ app.get('/webhook', (req, res) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode && token && token === VERIFY_TOKEN) {
+  if (mode && token && token === process.env.VERIFY_TOKEN) {
     console.log("✅ Webhook verificado.");
     res.status(200).send(challenge);
   } else {
