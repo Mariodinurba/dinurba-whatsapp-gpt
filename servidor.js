@@ -10,9 +10,6 @@ const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// Cargar archivo de conocimiento
-const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
-
 app.post('/webhook', async (req, res) => {
   const body = req.body;
 
@@ -25,31 +22,27 @@ app.post('/webhook', async (req, res) => {
     if (messageObject) {
       const phoneNumber = messageObject.from;
       const messageText = messageObject.text?.body;
+      const numeroDestino = phoneNumber.startsWith('521')
+        ? '+52' + phoneNumber.substring(3)
+        : '+' + phoneNumber;
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
+      console.log("🧠 Objeto completo del mensaje:", JSON.stringify(messageObject, null, 2));
 
       try {
-        const prompt = `
-${conocimiento.contexto_negocio}
-Instrucciones:
-${conocimiento.instrucciones_respuesta.map(i => '- ' + i).join('\n')}
+        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
 
-Respuestas base:
-${Object.entries(conocimiento.respuestas_base)
-  .map(([k, v]) => `${k}: "${v}"`)
-  .join('\n')}
-
-Mensaje del cliente: "${messageText}"
-`;
+        const prompt = [
+          { role: "system", content: conocimiento.contexto_negocio },
+          { role: "system", content: conocimiento.instrucciones_respuesta.join(" ") },
+          { role: "user", content: messageText }
+        ];
 
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
-            model: "gpt-4",
-            messages: [
-              { role: "system", content: "Eres un asistente de atención al cliente." },
-              { role: "user", content: prompt }
-            ]
+            model: 'gpt-4',
+            messages: prompt
           },
           {
             headers: {
@@ -64,11 +57,9 @@ Mensaje del cliente: "${messageText}"
         await axios.post(
           `https://graph.facebook.com/v18.0/${value.metadata.phone_number_id}/messages`,
           {
-            messaging_product: "whatsapp",
-            to: phoneNumber,
-            text: {
-              body: "🤖 " + respuesta
-            }
+            messaging_product: 'whatsapp',
+            to: numeroDestino,
+            text: { body: "🤖 " + respuesta }
           },
           {
             headers: {
