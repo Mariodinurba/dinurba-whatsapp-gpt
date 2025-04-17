@@ -1,3 +1,4 @@
+// servidor.js
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
@@ -43,7 +44,7 @@ app.post('/webhook', async (req, res) => {
 
     if (messageObject) {
       const rawNumber = messageObject.from;
-      const phoneNumber = rawNumber.replace(/^521/, '52'); // corrige el +1 después del 52
+      const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
 
@@ -61,15 +62,12 @@ app.post('/webhook', async (req, res) => {
           `SELECT * FROM conversaciones 
            WHERE numero = ? AND timestamp >= ? 
            ORDER BY timestamp DESC LIMIT 30`,
-          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6] // últimos 6 meses
+          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
         );
 
-        const primerosMensajes = rows.reverse(); // cronológico
-
-        // Buscar desde el primer mensaje en este periodo
+        const primerosMensajes = rows.reverse();
         const primerTimestamp = primerosMensajes[0]?.timestamp || 0;
 
-        // Traer todos los mensajes de Dinurba después de ese punto
         const enviadosPorDinurba = await db.all(
           `SELECT * FROM conversaciones 
            WHERE numero = ? AND rol = 'dinurba' AND timestamp >= ?
@@ -86,7 +84,7 @@ app.post('/webhook', async (req, res) => {
 
         contexto.unshift({
           role: "system",
-          content: conocimiento.contexto_negocio + "\n\nInstrucciones:\n" + conocimiento.instrucciones_respuesta.join('\n')
+          content: conocimiento.contexto_negocio.join('\n') + "\n\nInstrucciones:\n" + conocimiento.instrucciones_respuesta.join('\n')
         });
 
         const respuestaIA = await axios.post(
