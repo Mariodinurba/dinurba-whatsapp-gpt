@@ -58,24 +58,26 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, 'user', messageText, timestamp]
         );
 
-        const rows = await db.all(
+        // Obtener los últimos 30 mensajes del usuario en los últimos 6 meses
+        const userMessages = await db.all(
           `SELECT * FROM conversaciones 
-           WHERE numero = ? AND timestamp >= ? 
+           WHERE numero = ? AND rol = 'user' AND timestamp >= ? 
            ORDER BY timestamp DESC LIMIT 30`,
           [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
         );
 
-        const primerosMensajes = rows.reverse();
-        const primerTimestamp = primerosMensajes[0]?.timestamp || 0;
+        // Obtener el timestamp del mensaje más antiguo de los 30
+        const primerTimestamp = userMessages.length > 0 ? userMessages[userMessages.length - 1].timestamp : Date.now() / 1000;
 
-        const enviadosPorDinurba = await db.all(
+        // Obtener toda la conversación (usuario y Dinurba) desde el timestamp más antiguo, ordenada cronológicamente
+        const allMessages = await db.all(
           `SELECT * FROM conversaciones 
-           WHERE numero = ? AND rol = 'dinurba' AND timestamp >= ?
+           WHERE numero = ? AND timestamp >= ?
            ORDER BY timestamp ASC`,
           [phoneNumber, primerTimestamp]
         );
 
-        const historial = [...primerosMensajes, ...enviadosPorDinurba].map(m => ({
+        const historial = allMessages.map(m => ({
           role: m.rol === 'user' ? 'user' : 'assistant',
           content: m.contenido
         }));
@@ -101,12 +103,7 @@ app.post('/webhook', async (req, res) => {
             const quien = mensajeCitado.rol === 'user' ? 'el cliente' : 'Dinurba';
             citado = {
               role: 'system',
-              content: `El cliente está citando un mensaje anterior de ${quien}, que decía: "${mensajeCitado.contenido}". El cliente ahora escribió: "${messageText}". Responde considerando que el nuevo mensaje hace referencia directa al mensaje citado.`
-            };
-          } else {
-            citado = {
-              role: 'system',
-              content: `El cliente está citando un mensaje anterior, pero no se encontró en el historial. El cliente ahora escribió: "${messageText}". Responde basándote en el nuevo mensaje y el contexto general.`
+              content: `El cliente está citando un mensaje anterior de ${quien}, que decía: "${mensajeCitado.contenido}".`
             };
           }
         }
