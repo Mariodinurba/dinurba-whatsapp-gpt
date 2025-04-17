@@ -11,6 +11,7 @@
   ],
   "respuestas_base": {
     "deslinde": "Sí, realizamos trámites de deslinde. ¿En qué podemos ayudarte?",
-    "requisitos_deslinde": "Para iniciar un deslinde se necesita: predial pagado, solicitud firmada por el propietario o representante legal, copia de identificación oficial mexicana, y si firma un representante legal, también su documento legal (poder, compraventa, sentencia, etc.)."
+    "requisitos_deslinde": "Para iniciar un deslinde se necesita: predial pagado, solicitud firmada por el propietario o representante legal, copia de identificación oficial mexicana, y si firma un representante legal, también su documento legal (poder, compraventa, sentencia, etc.).",
+    "requisitos": "Para iniciar un deslinde se necesita: predial pagado, solicitud firmada por el propietario o representante legal, copia de identificación oficial mexicana, y si firma un representante legal, también su documento legal (poder, compraventa, sentencia, etc.)."
   }
 }
