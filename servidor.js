@@ -61,7 +61,7 @@ app.post('/webhook', async (req, res) => {
           `SELECT * FROM conversaciones 
            WHERE numero = ? AND timestamp >= ? 
            ORDER BY timestamp DESC LIMIT 30`,
-          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6] // 6 meses
+          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
         );
 
         const primerosMensajes = rows.reverse();
@@ -82,8 +82,13 @@ app.post('/webhook', async (req, res) => {
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
 
         contexto.unshift({
-            role: "system",
-           content: conocimiento.contexto_negocio + "\n\nInstrucciones:\n" + conocimiento.instrucciones_respuesta.join('\n') + "\n\n" + conocimiento.detalles_servicio.join('\n\n')
+          role: "system",
+          content:
+            conocimiento.contexto_negocio +
+            "\n\nInstrucciones:\n" +
+            conocimiento.instrucciones_respuesta.join('\n') +
+            "\n\nGuías para atender clientes:\n" +
+            conocimiento.detalles_servicio.join('\n')
         });
 
         const respuestaIA = await axios.post(
