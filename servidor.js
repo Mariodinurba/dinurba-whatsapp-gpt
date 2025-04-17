@@ -3,6 +3,7 @@ const axios = require('axios');
 const fs = require('fs');
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -24,7 +25,8 @@ const openDB = async () => {
       numero TEXT,
       rol TEXT,
       contenido TEXT,
-      timestamp INTEGER
+      timestamp INTEGER,
+      mensaje_id TEXT
     )
   `);
 
@@ -45,6 +47,8 @@ app.post('/webhook', async (req, res) => {
       const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
+      const messageId = messageObject.id;
+      const contextId = messageObject.context?.id;
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
@@ -52,8 +56,8 @@ app.post('/webhook', async (req, res) => {
         const db = await openDB();
 
         await db.run(
-          'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-          [phoneNumber, 'user', messageText, timestamp]
+          'INSERT INTO conversaciones (numero, rol, contenido, timestamp, mensaje_id) VALUES (?, ?, ?, ?, ?)',
+          [phoneNumber, 'user', messageText, timestamp, messageId]
         );
 
         const rows = await db.all(
@@ -68,23 +72,35 @@ app.post('/webhook', async (req, res) => {
 
         const enviadosPorDinurba = await db.all(
           `SELECT * FROM conversaciones 
-           WHERE numero = ? AND rol = 'dinurba' AND timestamp >= ? 
+           WHERE numero = ? AND rol = 'dinurba' AND timestamp >= ?
            ORDER BY timestamp ASC`,
           [phoneNumber, primerTimestamp]
         );
 
-        const mensajes = [...primerosMensajes, ...enviadosPorDinurba]
-          .filter(m => m.contenido)
-          .map(m => ({
-            role: m.rol === 'user' ? 'user' : 'assistant',
-            content: m.contenido
-          }));
+        const mensajes = [...primerosMensajes, ...enviadosPorDinurba].map(m => ({
+          role: m.rol === 'user' ? 'user' : 'assistant',
+          content: m.contenido
+        }));
 
-        const conocimiento = fs.readFileSync('./conocimiento_dinurba.json', 'utf8');
+        // Recuperar mensaje citado si existe
+        if (contextId) {
+          const citado = await db.get(
+            'SELECT contenido FROM conversaciones WHERE mensaje_id = ?',
+            [contextId]
+          );
+          if (citado && citado.contenido) {
+            mensajes.push({
+              role: 'user',
+              content: `Este mensaje fue citado por el usuario: "${citado.contenido}"`
+            });
+          }
+        }
+
+        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
 
         mensajes.unshift({
-          role: "system",
-          content: conocimiento
+          role: 'system',
+          content: conocimiento.contexto_negocio + '\n\nInstrucciones:\n' + conocimiento.instrucciones_respuesta.join('\n')
         });
 
         const respuestaIA = await axios.post(
