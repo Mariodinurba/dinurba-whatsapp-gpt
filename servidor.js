@@ -46,8 +46,7 @@ app.post('/webhook', async (req, res) => {
       const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
-      const quotedMessage = messageObject?.context?.quoted_message?.text?.body;
-      const quotedSender = messageObject?.context?.quoted_message?.from;
+      const quotedMessage = messageObject.context?.id || null;
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
@@ -76,40 +75,44 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, primerTimestamp]
         );
 
-        const contexto = [...primerosMensajes, ...enviadosPorDinurba].map(m => ({
+        const historial = [...primerosMensajes, ...enviadosPorDinurba].map(m => ({
           role: m.rol === 'user' ? 'user' : 'assistant',
           content: m.contenido
         }));
 
-        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
+        const conocimiento_dinurba = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
+        const instrucciones = conocimiento_dinurba.instrucciones_respuesta || [];
 
-        const mensajesSistema = [
+        const sistema = [
           {
-            role: 'system',
-            content: conocimiento.contexto_negocio
+            role: "system",
+            content: conocimiento_dinurba.contexto_negocio || "Eres un asistente virtual de Dinurba."
           },
-          ...conocimiento.instrucciones_respuesta.map(instr => ({
-            role: 'system',
+          ...instrucciones.map(instr => ({
+            role: "system",
             content: instr
           }))
         ];
 
+        let citado = null;
         if (quotedMessage) {
-          const quien = quotedSender === phoneNumber ? "el usuario ha citado su propio mensaje anterior" : "el usuario ha citado un mensaje anterior enviado por Dinurba";
-          contexto.push({
-            role: 'user',
-            content: `${quien}: "${quotedMessage}"
-Y ha preguntado: "${messageText}"`
-          });
-        } else {
-          contexto.push({ role: 'user', content: messageText });
+          const mensajeCitado = await db.get('SELECT * FROM conversaciones WHERE id = ?', [quotedMessage]);
+          if (mensajeCitado) {
+            const quien = mensajeCitado.rol === 'user' ? 'el cliente' : 'Dinurba';
+            citado = {
+              role: 'system',
+              content: `El cliente está citando un mensaje anterior de ${quien}, que decía: "${mensajeCitado.contenido}".`
+            };
+          }
         }
+
+        const contexto = citado ? [...sistema, citado, ...historial] : [...sistema, ...historial];
 
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
             model: "gpt-4",
-            messages: [...mensajesSistema, ...contexto]
+            messages: contexto
           },
           {
             headers: {
