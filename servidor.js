@@ -48,7 +48,7 @@ app.post('/webhook', async (req, res) => {
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
       const messageId = messageObject.id;
-      const contextId = messageObject.context?.id;
+      const quotedMessageId = messageObject?.context?.id;
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
@@ -60,11 +60,13 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, 'user', messageText, timestamp, messageId]
         );
 
+        const seisMesesAntes = Date.now() / 1000 - 60 * 60 * 24 * 30 * 6;
+
         const rows = await db.all(
           `SELECT * FROM conversaciones 
            WHERE numero = ? AND timestamp >= ? 
            ORDER BY timestamp DESC LIMIT 30`,
-          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
+          [phoneNumber, seisMesesAntes]
         );
 
         const primerosMensajes = rows.reverse();
@@ -77,37 +79,40 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, primerTimestamp]
         );
 
-        const mensajes = [...primerosMensajes, ...enviadosPorDinurba].map(m => ({
+        const contexto = [...primerosMensajes, ...enviadosPorDinurba].map(m => ({
           role: m.rol === 'user' ? 'user' : 'assistant',
           content: m.contenido
         }));
 
-        // Recuperar mensaje citado si existe
-        if (contextId) {
+        // Agregar mensaje citado si existe
+        if (quotedMessageId) {
           const citado = await db.get(
-            'SELECT contenido FROM conversaciones WHERE mensaje_id = ?',
-            [contextId]
+            `SELECT rol, contenido FROM conversaciones WHERE mensaje_id = ?`,
+            [quotedMessageId]
           );
-          if (citado && citado.contenido) {
-            mensajes.push({
-              role: 'user',
-              content: `Este mensaje fue citado por el usuario: "${citado.contenido}"`
+
+          if (citado) {
+            const autor = citado.rol === 'user' ? 'el usuario citó su propio mensaje' : 'el usuario citó un mensaje enviado por Dinurba';
+            contexto.unshift({
+              role: 'system',
+              content: `${autor}: "${citado.contenido}"`
             });
           }
         }
 
+        // Cargar conocimiento
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
 
-        mensajes.unshift({
-          role: 'system',
-          content: conocimiento.contexto_negocio + '\n\nInstrucciones:\n' + conocimiento.instrucciones_respuesta.join('\n')
+        contexto.unshift({
+          role: "system",
+          content: conocimiento.join("\n")
         });
 
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
             model: "gpt-4",
-            messages: mensajes
+            messages: contexto
           },
           {
             headers: {
