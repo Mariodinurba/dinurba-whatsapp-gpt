@@ -1,30 +1,19 @@
 {
   "name": "dinurba-whatsapp-gpt",
   "version": "1.0.0",
-  "description": "WhatsApp Bot OpenAI ChatGPT usando la API oficial de WhatsApp",
+  "description": "WhatsApp Bot Dinurba con ChatGPT",
   "main": "servidor.js",
+  "type": "module",
   "scripts": {
     "start": "node servidor.js"
   },
-  "keywords": [
-    "whatsapp",
-    "chatgpt",
-    "whatsapp-gpt",
-    "openai",
-    "meta-api"
-  ],
-  "author": "Mario Dinurba",
-  "license": "MIT",
   "dependencies": {
     "axios": "^1.6.7",
     "body-parser": "^1.20.2",
-    "chatgpt": "^5.3.2",
-    "dotenv": "^16.4.5",
+    "chatgpt": "^5.2.4",
+    "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "sqlite": "^4.1.2",
+    "sqlite": "^4.2.1",
     "sqlite3": "^5.1.6"
-  },
-  "engines": {
-    "node": "18.x"
   }
 }
