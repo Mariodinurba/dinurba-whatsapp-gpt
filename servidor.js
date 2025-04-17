@@ -9,6 +9,9 @@ const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
+// Tu número real (sin el +), como string:
+const MI_NUMERO = "5216861707494";
+
 app.post('/webhook', async (req, res) => {
   const body = req.body;
 
@@ -19,10 +22,11 @@ app.post('/webhook', async (req, res) => {
     const messageObject = value?.messages?.[0];
 
     if (messageObject) {
-      const phoneNumber = messageObject.from;
+      const phoneNumber = MI_NUMERO; // Fuerza siempre a responder a ti
       const messageText = messageObject.text?.body;
 
-      console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
+      console.log("📩 Mensaje recibido (forzado a responder a Mario):", messageText);
+      console.log("🧾 Objeto completo del mensaje:", JSON.stringify(messageObject, null, 2));
 
       try {
         const respuestaIA = await axios.post(
