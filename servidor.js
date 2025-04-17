@@ -99,10 +99,20 @@ app.post('/webhook', async (req, res) => {
           const mensajeCitado = await db.get('SELECT * FROM conversaciones WHERE id = ?', [quotedMessage]);
           if (mensajeCitado) {
             const quien = mensajeCitado.rol === 'user' ? 'el cliente' : 'Dinurba';
+            
+            // Instrucción más clara sobre cómo interpretar la relación
             citado = {
               role: 'system',
-              content: `El cliente está citando un mensaje anterior de ${quien}, que decía: "${mensajeCitado.contenido}".`
+              content: `IMPORTANTE: El cliente acaba de citar un mensaje anterior que decía: "${mensajeCitado.contenido}". 
+              Luego escribió: "${messageText}". 
+              Este nuevo mensaje hace referencia directa al mensaje citado y NO son mensajes independientes.
+              El cliente está preguntando, comentando o reaccionando específicamente al contenido citado.
+              Responde tomando en cuenta esta relación contextual, como lo haría un humano en una conversación natural.`
             };
+            
+            // También podemos añadir un log para depuración
+            console.log("🔍 Mensaje citado detectado:", mensajeCitado.contenido);
+            console.log("📝 Nuevo mensaje relacionado:", messageText);
           }
         }
 
