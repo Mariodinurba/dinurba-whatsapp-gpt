@@ -12,6 +12,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
 const openDB = async () => {
   const db = await open({
@@ -25,8 +26,7 @@ const openDB = async () => {
       numero TEXT,
       rol TEXT,
       contenido TEXT,
-      timestamp INTEGER,
-      mensaje_id TEXT
+      timestamp INTEGER
     )
   `);
 
@@ -45,10 +45,10 @@ app.post('/webhook', async (req, res) => {
     if (messageObject) {
       const rawNumber = messageObject.from;
       const phoneNumber = rawNumber.replace(/^521/, '52');
-      const messageText = messageObject.text?.body;
+      const messageText = messageObject.text?.body || '';
       const timestamp = parseInt(messageObject.timestamp);
-      const messageId = messageObject.id;
-      const quotedMessageId = messageObject?.context?.id;
+      const quotedMessage = messageObject.context?.quoted_message?.text?.body || null;
+      const quotedFrom = messageObject.context?.quoted_message?.from || null;
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
@@ -56,24 +56,23 @@ app.post('/webhook', async (req, res) => {
         const db = await openDB();
 
         await db.run(
-          'INSERT INTO conversaciones (numero, rol, contenido, timestamp, mensaje_id) VALUES (?, ?, ?, ?, ?)',
-          [phoneNumber, 'user', messageText, timestamp, messageId]
+          'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
+          [phoneNumber, 'user', messageText, timestamp]
         );
 
-        const seisMesesAntes = Date.now() / 1000 - 60 * 60 * 24 * 30 * 6;
-
-        const rows = await db.all(
-          `SELECT * FROM conversaciones 
-           WHERE numero = ? AND timestamp >= ? 
+        const seisMesesAntes = Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 30 * 6;
+        const mensajesUsuario = await db.all(
+          `SELECT * FROM conversaciones
+           WHERE numero = ? AND rol = 'user' AND timestamp >= ?
            ORDER BY timestamp DESC LIMIT 30`,
           [phoneNumber, seisMesesAntes]
         );
 
-        const primerosMensajes = rows.reverse();
+        const primerosMensajes = mensajesUsuario.reverse();
         const primerTimestamp = primerosMensajes[0]?.timestamp || 0;
 
         const enviadosPorDinurba = await db.all(
-          `SELECT * FROM conversaciones 
+          `SELECT * FROM conversaciones
            WHERE numero = ? AND rol = 'dinurba' AND timestamp >= ?
            ORDER BY timestamp ASC`,
           [phoneNumber, primerTimestamp]
@@ -84,28 +83,20 @@ app.post('/webhook', async (req, res) => {
           content: m.contenido
         }));
 
-        // Agregar mensaje citado si existe
-        if (quotedMessageId) {
-          const citado = await db.get(
-            `SELECT rol, contenido FROM conversaciones WHERE mensaje_id = ?`,
-            [quotedMessageId]
-          );
-
-          if (citado) {
-            contexto.unshift({
-              role: citado.rol === 'user' ? 'user' : 'assistant',
-              content: `El usuario citó este mensaje: "${citado.contenido}"`
-            });
-          }
+        if (quotedMessage) {
+          const autor = quotedFrom === value.metadata.phone_number_id ? 'Dinurba' : 'cliente';
+          contexto.push({
+            role: 'system',
+            content: `Mensaje citado (${autor}): ${quotedMessage}`
+          });
         }
 
-        // Cargar conocimiento
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
 
-        conocimiento.conocimiento.forEach(instruccion => {
+        conocimiento.forEach(p => {
           contexto.unshift({
             role: "system",
-            content: instruccion
+            content: p
           });
         });
 
@@ -127,7 +118,7 @@ app.post('/webhook', async (req, res) => {
 
         await db.run(
           'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-          [phoneNumber, 'dinurba', respuesta, Date.now() / 1000]
+          [phoneNumber, 'dinurba', respuesta, Math.floor(Date.now() / 1000)]
         );
 
         await axios.post(
@@ -164,7 +155,7 @@ app.get('/webhook', (req, res) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode && token && token === process.env.VERIFY_TOKEN) {
+  if (mode && token && token === VERIFY_TOKEN) {
     console.log("✅ Webhook verificado.");
     res.status(200).send(challenge);
   } else {
