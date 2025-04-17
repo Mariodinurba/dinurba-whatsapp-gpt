@@ -46,8 +46,17 @@ app.post('/webhook', async (req, res) => {
       const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
-      const quotedMessage = messageObject.context?.quotedMessage?.extendedTextMessage?.text ||
-                            messageObject.context?.quotedMessage?.conversation;
+
+      const quotedMessage = messageObject?.context?.quoted_message?.text?.body;
+      const quotedFrom = messageObject?.context?.quoted_message?.from;
+      const isQuotedFromDinurba = quotedFrom && quotedFrom !== rawNumber;
+      let contextoCita = '';
+
+      if (quotedMessage) {
+        contextoCita = isQuotedFromDinurba
+          ? `Mensaje citado de Dinurba: "${quotedMessage}"`
+          : `Mensaje citado del cliente: "${quotedMessage}"`;
+      }
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
@@ -76,35 +85,27 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, primerTimestamp]
         );
 
+        const contexto = [...primerosMensajes, ...enviadosPorDinurba].map(m => ({
+          role: m.rol === 'user' ? 'user' : 'assistant',
+          content: m.contenido
+        }));
+
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
 
-        const contexto = [
-          {
-            role: "system",
-            content: conocimiento.join('\n')
-          },
-          ...primerosMensajes.map(m => ({
-            role: m.rol === 'user' ? 'user' : 'assistant',
-            content: m.contenido
-          })),
-          ...enviadosPorDinurba.map(m => ({
-            role: 'assistant',
-            content: m.contenido
-          }))
-        ];
+        const mensajesSistema = conocimiento.map(texto => ({
+          role: "system",
+          content: texto
+        }));
 
-        if (quotedMessage) {
-          contexto.push({
-            role: 'user',
-            content: `🧾 El cliente citó este mensaje: "${quotedMessage}"`
-          });
+        if (contextoCita) {
+          contexto.push({ role: 'user', content: contextoCita });
         }
 
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
             model: "gpt-4",
-            messages: contexto
+            messages: [...mensajesSistema, ...contexto]
           },
           {
             headers: {
