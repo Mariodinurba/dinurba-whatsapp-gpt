@@ -54,6 +54,7 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
 
 app.post('/webhook', async (req, res) => {
   if (!req.body || Object.keys(req.body).length === 0) {
+    console.warn('⚠️ Webhook recibido sin cuerpo');
     return res.sendStatus(400);
   }
 
@@ -96,32 +97,11 @@ app.post('/webhook', async (req, res) => {
 
         const contexto = [...sistema];
         const wa_idsCitados = [];
-        const bloquesSystem = [];
-        let saltarUltimoMensajeUser = false;
-
-        if (quotedId) {
-          await enviarMensajeWhatsApp(phoneNumber, `📝 wa_id recibido:\n${wa_id}`, phone_id);
-          await enviarMensajeWhatsApp(phoneNumber, `📎 quotedId (context.id) recibido:\n${quotedId}`, phone_id);
-          await enviarMensajeWhatsApp(phoneNumber, `🔍 Buscando mensaje con wa_id =\n${quotedId}`, phone_id);
-        }
 
         for (let i = 0; i < allMessages.length; i++) {
           const m = allMessages[i];
-
-          if (quotedId && m.wa_id === quotedId) {
+          if (m.wa_id === quotedId) {
             wa_idsCitados.push(m.wa_id);
-
-            const quien = m.rol === 'user' ? 'el cliente' : 'Dinurba';
-            const bloque = {
-              role: 'system',
-              content: `El cliente citó un mensaje anterior de ${quien}: "${m.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
-            };
-
-            bloquesSystem.push({ posicion: i, bloque });
-
-            await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${m.contenido}"`, phone_id);
-            await enviarMensajeWhatsApp(phoneNumber, `📦 Bloque generado para IA:\n${JSON.stringify(bloque, null, 2)}`, phone_id);
-            saltarUltimoMensajeUser = true;
           }
         }
 
@@ -134,14 +114,23 @@ app.post('/webhook', async (req, res) => {
 
           contexto.push({ role: m.rol === 'user' ? 'user' : 'assistant', content: m.contenido });
 
-          const bloqueEnEstaPosicion = bloquesSystem.find(b => b.posicion === i);
-          if (bloqueEnEstaPosicion) {
-            contexto.push(bloqueEnEstaPosicion.bloque);
-          }
-        }
+          if (m.wa_id === quotedId) {
+            const citado = allMessages.find(msg => msg.wa_id === quotedId);
+            if (citado) {
+              const quien = citado.rol === 'user' ? 'el cliente' : 'Dinurba';
+              const bloque = {
+                role: 'system',
+                content: `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
+              };
+              contexto.push(bloque);
 
-        if (!quotedId || !saltarUltimoMensajeUser) {
-          contexto.push({ role: 'user', content: messageText });
+              await enviarMensajeWhatsApp(phoneNumber, `📝 wa_id recibido:\n${wa_id}`, phone_id);
+              await enviarMensajeWhatsApp(phoneNumber, `📎 quotedId (context.id) recibido:\n${quotedId}`, phone_id);
+              await enviarMensajeWhatsApp(phoneNumber, `🔍 Buscando mensaje con wa_id =\n${quotedId}`, phone_id);
+              await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citado.contenido}"`, phone_id);
+              await enviarMensajeWhatsApp(phoneNumber, `📦 Bloque generado para IA:\n${JSON.stringify(bloque, null, 2)}`, phone_id);
+            }
+          }
         }
 
         const respuestaIA = await axios.post(
