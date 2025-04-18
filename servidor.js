@@ -1,4 +1,3 @@
-// servidor.js
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
@@ -22,6 +21,7 @@ const openDB = async () => {
   await db.exec(`
     CREATE TABLE IF NOT EXISTS conversaciones (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      wa_id TEXT,
       numero TEXT,
       rol TEXT,
       contenido TEXT,
@@ -46,6 +46,8 @@ app.post('/webhook', async (req, res) => {
       const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
+      const wa_id = messageObject.id;
+      const quotedId = messageObject.context?.id || null;
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
@@ -53,8 +55,8 @@ app.post('/webhook', async (req, res) => {
         const db = await openDB();
 
         await db.run(
-          'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-          [phoneNumber, 'user', messageText, timestamp]
+          'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
+          [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
 
         const userMessages = await db.all(
@@ -89,7 +91,19 @@ app.post('/webhook', async (req, res) => {
           ...instrucciones.map(instr => ({ role: "system", content: instr }))
         ];
 
-        const contexto = [...sistema, ...historial];
+        let citado = null;
+        if (quotedId) {
+          const mensajeCitado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
+          if (mensajeCitado) {
+            const quien = mensajeCitado.rol === 'user' ? 'el cliente' : 'Dinurba';
+            citado = {
+              role: 'system',
+              content: `El cliente citó un mensaje anterior de ${quien}: "${mensajeCitado.contenido}". Luego escribió: "${messageText}". Responde considerando la relación entre ambos mensajes.`
+            };
+          }
+        }
+
+        const contexto = citado ? [...sistema, citado, ...historial] : [...sistema, ...historial];
 
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
@@ -107,12 +121,8 @@ app.post('/webhook', async (req, res) => {
 
         const respuesta = respuestaIA.data.choices[0].message.content;
 
-        await db.run(
-          'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-          [phoneNumber, 'dinurba', respuesta, Date.now() / 1000]
-        );
-
-        await axios.post(
+        // Enviar el mensaje a WhatsApp primero para obtener el message_id
+        const whatsappResponse = await axios.post(
           `https://graph.facebook.com/v18.0/${value.metadata.phone_number_id}/messages`,
           {
             messaging_product: "whatsapp",
@@ -127,6 +137,15 @@ app.post('/webhook', async (req, res) => {
               'Content-Type': 'application/json'
             }
           }
+        );
+
+        // Extraer el message_id de la respuesta de WhatsApp
+        const respuestaWaId = whatsappResponse.data.messages?.[0]?.id || null;
+
+        // Guardar la respuesta en la base de datos con el wa_id
+        await db.run(
+          'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
+          [respuestaWaId, phoneNumber, 'dinurba', respuesta, Date.now() / 1000]
         );
 
         console.log("✅ Respuesta enviada a WhatsApp.");
