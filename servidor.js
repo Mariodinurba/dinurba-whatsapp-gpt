@@ -46,7 +46,7 @@ app.post('/webhook', async (req, res) => {
       const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
-      const quotedId = messageObject.context?.id || messageObject.context?.message_id || null;
+      const quotedId = messageObject.context?.id || null;
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
@@ -95,18 +95,19 @@ app.post('/webhook', async (req, res) => {
 
         let citado = null;
 
-        if (quotedId) {
+        // --- CORRECCIÓN PRINCIPAL AQUÍ ---
+        if (messageObject.context?.quoted_message?.text?.body) {
+          const quotedText = messageObject.context.quoted_message.text.body;
+          citado = {
+            role: 'system',
+            content: `El cliente está citando este mensaje: "${quotedText}". Su pregunta actual es: "${messageText}". Responde interpretando específicamente el mensaje citado.`
+          };
+        } else if (quotedId) {
           const citadoDB = await db.get('SELECT * FROM conversaciones WHERE id = ?', [quotedId]);
           if (citadoDB) {
-            const autor = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
             citado = {
               role: 'system',
-              content: `El cliente está citando un mensaje anterior de ${autor}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Analiza la relación entre ambos y responde en consecuencia.`
-            };
-          } else if (messageObject.context?.quoted_message?.text?.body) {
-            citado = {
-              role: 'system',
-              content: `El cliente está citando un mensaje que decía: "${messageObject.context.quoted_message.text.body}". Luego escribió: "${messageText}". Analiza la relación entre ambos y responde en consecuencia.`
+              content: `El cliente está citando un mensaje anterior: "${citadoDB.contenido}". Su pregunta actual es: "${messageText}". Responde interpretando específicamente el mensaje citado.`
             };
           }
         }
