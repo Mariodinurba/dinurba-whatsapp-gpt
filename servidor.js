@@ -44,7 +44,7 @@ const openDB = async () => {
 
 
 
-    await db.exec(
+    await db.exec(`
 
       CREATE TABLE IF NOT EXISTS conversaciones (
 
@@ -62,7 +62,7 @@ const openDB = async () => {
 
       )
 
-    );
+    `);
 
   }
 
