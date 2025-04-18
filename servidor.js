@@ -6,7 +6,7 @@ const { open } = require('sqlite');
 require('dotenv').config();
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
@@ -21,7 +21,7 @@ const openDB = async () => {
       driver: sqlite3.Database
     });
 
-    await db.exec(
+    await db.exec(`
       CREATE TABLE IF NOT EXISTS conversaciones (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         wa_id TEXT,
@@ -30,14 +30,14 @@ const openDB = async () => {
         contenido TEXT,
         timestamp INTEGER
       )
-    );
+    `);
   }
   return db;
 };
 
 const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
   await axios.post(
-    https://graph.facebook.com/v18.0/${phone_id}/messages,
+    `https://graph.facebook.com/v18.0/${phone_id}/messages`,
     {
       messaging_product: "whatsapp",
       to: numero,
@@ -45,7 +45,7 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
     },
     {
       headers: {
-        Authorization: Bearer ${WHATSAPP_TOKEN},
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
         'Content-Type': 'application/json'
       }
     }
@@ -53,11 +53,8 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
 };
 
 app.post('/webhook', async (req, res) => {
-  if (!req.body || Object.keys(req.body).length === 0) {
-    return res.sendStatus(400);
-  }
-
   const body = req.body;
+
   if (body.object) {
     const entry = body.entry?.[0];
     const changes = entry?.changes?.[0];
@@ -81,68 +78,77 @@ app.post('/webhook', async (req, res) => {
           [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
 
+        let quotedInfo = `📝 wa_id recibido: ${wa_id}`;
+        if (quotedId) {
+          quotedInfo += `\n📎 quotedId (context.id) recibido: ${quotedId}`;
+          quotedInfo += `\n🔍 Buscando mensaje con wa_id = ${quotedId}`;
+        }
+
+        if (quotedInfo) {
+          await enviarMensajeWhatsApp(phoneNumber, quotedInfo, phone_id);
+        }
+
         const seisMeses = 60 * 60 * 24 * 30 * 6;
         const desde = Date.now() / 1000 - seisMeses;
 
-        const allMessages = await db.all(
-          SELECT * FROM conversaciones
-           WHERE numero = ? AND timestamp >= ?
-           ORDER BY timestamp ASC,
+        const userMessages = await db.all(
+          `SELECT * FROM conversaciones 
+           WHERE numero = ? AND rol = 'user' AND timestamp >= ?
+           ORDER BY timestamp DESC LIMIT 30`,
           [phoneNumber, desde]
         );
 
-        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
-        const sistema = conocimiento.map(instr => ({ role: "system", content: instr }));
+        const primerTimestamp = userMessages.length > 0
+          ? userMessages[userMessages.length - 1].timestamp
+          : Date.now() / 1000;
 
-        const contexto = [...sistema];
-        const wa_idsCitados = [];
-        const bloquesSystem = [];
-        let saltarUltimoMensajeUser = false;
+        const allMessages = await db.all(
+          `SELECT * FROM conversaciones
+           WHERE numero = ? AND timestamp >= ?
+           ORDER BY timestamp ASC`,
+          [phoneNumber, primerTimestamp]
+        );
+
+        const historial = allMessages.map(m => ({
+          role: m.rol === 'user' ? 'user' : 'assistant',
+          content: m.contenido
+        }));
+
+        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
+        const sistema = conocimiento.map(instr => ({
+          role: "system",
+          content: instr
+        }));
+
+        let citado = null;
 
         if (quotedId) {
-          await enviarMensajeWhatsApp(phoneNumber, 📝 wa_id recibido:\n${wa_id}, phone_id);
-          await enviarMensajeWhatsApp(phoneNumber, 📎 quotedId (context.id) recibido:\n${quotedId}, phone_id);
-          await enviarMensajeWhatsApp(phoneNumber, 🔍 Buscando mensaje con wa_id =\n${quotedId}, phone_id);
-        }
+          let citadoDB = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
 
-        for (let i = 0; i < allMessages.length; i++) {
-          const m = allMessages[i];
+          if (!citadoDB) {
+            await new Promise(resolve => setTimeout(resolve, 300));
+            citadoDB = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
+          }
 
-          if (quotedId && m.wa_id === quotedId) {
-            wa_idsCitados.push(m.wa_id);
-
-            const quien = m.rol === 'user' ? 'el cliente' : 'Dinurba';
-            const bloque = {
-              role: 'system',
-              content: El cliente citó un mensaje anterior de ${quien}: "${m.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.
-            };
-
-            bloquesSystem.push({ posicion: i, bloque });
-
-            await enviarMensajeWhatsApp(phoneNumber, ✅ Mensaje citado encontrado:\n"${m.contenido}", phone_id);
-            await enviarMensajeWhatsApp(phoneNumber, 📦 Bloque generado para IA:\n${JSON.stringify(bloque, null, 2)}, phone_id);
-            saltarUltimoMensajeUser = true;
+          if (citadoDB) {
+            const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
+            if (messageText.toLowerCase().includes("literalmente")) {
+              citado = {
+                role: 'system',
+                content: `El cliente pidió conocer el contenido literal de un mensaje citado. Este fue el mensaje citado: "${citadoDB.contenido}". No agregues nada más.`
+              };
+            } else {
+              citado = {
+                role: 'system',
+                content: `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
+              };
+            }
           }
         }
 
-        for (let i = 0; i < allMessages.length; i++) {
-          const m = allMessages[i];
-
-          if (m.rol === 'user' && wa_idsCitados.includes(m.wa_id)) {
-            continue;
-          }
-
-          contexto.push({ role: m.rol === 'user' ? 'user' : 'assistant', content: m.contenido });
-
-          const bloqueEnEstaPosicion = bloquesSystem.find(b => b.posicion === i);
-          if (bloqueEnEstaPosicion) {
-            contexto.push(bloqueEnEstaPosicion.bloque);
-          }
-        }
-
-        if (!quotedId || !saltarUltimoMensajeUser) {
-          contexto.push({ role: 'user', content: messageText });
-        }
+        let contexto = [...sistema];
+        if (citado) contexto.push(citado);
+        contexto.push(...historial);
 
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
@@ -152,7 +158,7 @@ app.post('/webhook', async (req, res) => {
           },
           {
             headers: {
-              Authorization: Bearer ${OPENAI_API_KEY},
+              Authorization: `Bearer ${OPENAI_API_KEY}`,
               'Content-Type': 'application/json'
             }
           }
@@ -161,7 +167,7 @@ app.post('/webhook', async (req, res) => {
         const respuestaGenerada = respuestaIA.data.choices[0].message.content;
 
         const respuestaWa = await axios.post(
-          https://graph.facebook.com/v18.0/${phone_id}/messages,
+          `https://graph.facebook.com/v18.0/${phone_id}/messages`,
           {
             messaging_product: "whatsapp",
             to: phoneNumber,
@@ -169,7 +175,7 @@ app.post('/webhook', async (req, res) => {
           },
           {
             headers: {
-              Authorization: Bearer ${WHATSAPP_TOKEN},
+              Authorization: `Bearer ${WHATSAPP_TOKEN}`,
               'Content-Type': 'application/json'
             }
           }
@@ -185,7 +191,7 @@ app.post('/webhook', async (req, res) => {
       } catch (error) {
         const errorMsg = error.response?.data?.error?.message || error.message;
         console.error("❌ Error:", errorMsg);
-        await enviarMensajeWhatsApp(phoneNumber, ❌ Error: ${errorMsg}, phone_id);
+        await enviarMensajeWhatsApp(phoneNumber, `❌ Error: ${errorMsg}`, phone_id);
       }
     }
 
@@ -209,5 +215,5 @@ app.get('/webhook', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(🚀 Servidor corriendo en el puerto ${PORT});
+  console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
 });
