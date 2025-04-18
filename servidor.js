@@ -39,7 +39,7 @@ const openDB = async () => {
 // Función para enviar mensajes a WhatsApp
 const enviarMensajeWhatsApp = async (numero, texto) => {
   await axios.post(
-    `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
+    `https://graph.facebook.com/v18.0/${value.metadata.phone_number_id}/messages`,
     {
       messaging_product: "whatsapp",
       to: numero,
