@@ -159,7 +159,7 @@ app.post('/webhook', async (req, res) => {
     const respuestaIA = await axios.post(
       'https://api.openai.com/v1/chat/completions',
       {
-        model: "g-6802cfdc02bc81919e03fb716c205149-dinurba", // 👈 Reemplaza con tu ID real
+        model: "asst_NSwFHnPDYNWpuC9YoySUozJR", // 👈 Reemplaza con tu ID real
         messages: contexto
       },
       {
