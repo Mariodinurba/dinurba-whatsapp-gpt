@@ -58,7 +58,6 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, 'user', messageText, timestamp]
         );
 
-        // Obtener los últimos 30 mensajes del usuario en los últimos 6 meses
         const userMessages = await db.all(
           `SELECT * FROM conversaciones 
            WHERE numero = ? AND rol = 'user' AND timestamp >= ? 
@@ -66,10 +65,8 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
         );
 
-        // Obtener el timestamp del mensaje más antiguo de los 30
         const primerTimestamp = userMessages.length > 0 ? userMessages[userMessages.length - 1].timestamp : Date.now() / 1000;
 
-        // Obtener toda la conversación (usuario y Dinurba) desde el timestamp más antiguo, ordenada cronológicamente
         const allMessages = await db.all(
           `SELECT * FROM conversaciones 
            WHERE numero = ? AND timestamp >= ?
