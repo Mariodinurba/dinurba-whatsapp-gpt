@@ -42,15 +42,12 @@ app.post('/webhook', async (req, res) => {
     const messageObject = value?.messages?.[0];
 
     if (messageObject) {
-      console.log("📝 Estructura completa del mensaje:", JSON.stringify(messageObject, null, 2));
-
       const rawNumber = messageObject.from;
       const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
-      const quotedMessage = messageObject.context?.id || messageObject.context?.message_id || null;
+      const quotedId = messageObject.context?.id || messageObject.context?.message_id || null;
 
-      console.log("🔗 ID del mensaje citado:", quotedMessage);
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
       try {
@@ -82,13 +79,13 @@ app.post('/webhook', async (req, res) => {
           content: m.contenido
         }));
 
-        const conocimiento_dinurba = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
-        const instrucciones = conocimiento_dinurba.instrucciones_respuesta || [];
+        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
+        const instrucciones = conocimiento.instrucciones_respuesta || [];
 
         const sistema = [
           {
             role: "system",
-            content: conocimiento_dinurba.contexto_negocio || "Eres un asistente virtual de Dinurba."
+            content: conocimiento.contexto_negocio || "Eres un asistente virtual de Dinurba."
           },
           ...instrucciones.map(instr => ({
             role: "system",
@@ -97,28 +94,19 @@ app.post('/webhook', async (req, res) => {
         ];
 
         let citado = null;
-        if (messageObject.context) {
-          console.log("📋 Contexto completo:", JSON.stringify(messageObject.context, null, 2));
-          console.log("🔍 Buscando mensaje con ID:", quotedMessage);
 
-          const mensajeCitado = await db.get('SELECT * FROM conversaciones WHERE id = ?', [quotedMessage]);
-          console.log("🔎 Resultado de la búsqueda:", mensajeCitado);
-
-          if (mensajeCitado) {
-            const quien = mensajeCitado.rol === 'user' ? 'el cliente' : 'Dinurba';
+        if (quotedId) {
+          const citadoDB = await db.get('SELECT * FROM conversaciones WHERE id = ?', [quotedId]);
+          if (citadoDB) {
+            const autor = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
             citado = {
               role: 'system',
-              content: `IMPORTANTE: El cliente acaba de citar un mensaje anterior que decía: "${mensajeCitado.contenido}". \nLuego escribió: "${messageText}".\nEste nuevo mensaje hace referencia directa al mensaje citado. Responde interpretando la relación entre ambos mensajes.`
+              content: `El cliente está citando un mensaje anterior de ${autor}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Analiza la relación entre ambos y responde en consecuencia.`
             };
-          } else if (messageObject.context.quoted_message?.text?.body) {
+          } else if (messageObject.context?.quoted_message?.text?.body) {
             citado = {
               role: 'system',
-              content: `IMPORTANTE: El cliente acaba de citar un mensaje que decía: "${messageObject.context.quoted_message.text.body}".\nLuego escribió: "${messageText}".\nResponde interpretando la relación entre ambos mensajes.`
-            };
-          } else {
-            citado = {
-              role: 'system',
-              content: `El cliente está respondiendo a un mensaje anterior, pero no tenemos acceso a su contenido.\nEl cliente escribió: "${messageText}".\nResponde lo mejor posible basándote en el contexto general de la conversación, sin mencionar que no puedes ver el mensaje citado.`
+              content: `El cliente está citando un mensaje que decía: "${messageObject.context.quoted_message.text.body}". Luego escribió: "${messageText}". Analiza la relación entre ambos y responde en consecuencia.`
             };
           }
         }
