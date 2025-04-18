@@ -49,28 +49,35 @@ app.post('/webhook', async (req, res) => {
       const wa_id = messageObject.id;
       const quotedId = messageObject.context?.id || null;
 
+      console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
+
       try {
         const db = await openDB();
 
         await db.run(
-          'INSERT INTO conversaciones (wa_id, Numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
+          'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
           [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
 
-        // Retraso opcional para asegurar que la base de datos esté actualizada
-        await new Promise(r => setTimeout(r, 200));
+        // 1. Últimos 30 mensajes del cliente dentro de 6 meses
+        const seisMeses = 60 * 60 * 24 * 30 * 6;
+        const desde = Date.now() / 1000 - seisMeses;
 
         const userMessages = await db.all(
           `SELECT * FROM conversaciones 
-           WHERE numero = ? AND rol = 'user' AND timestamp >= ? 
+           WHERE numero = ? AND rol = 'user' AND timestamp >= ?
            ORDER BY timestamp DESC LIMIT 30`,
-          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
+          [phoneNumber, desde]
         );
 
-        const primerTimestamp = userMessages.length > 0 ? userMessages[userMessages.length - 1].timestamp : Date.now() / 1000;
+        // 2. Obtener el timestamp más antiguo
+        const primerTimestamp = userMessages.length > 0
+          ? userMessages[userMessages.length - 1].timestamp
+          : Date.now() / 1000;
 
+        // 3. Obtener todos los mensajes desde ese punto en adelante
         const allMessages = await db.all(
-          `SELECT * FROM conversaciones 
+          `SELECT * FROM conversaciones
            WHERE numero = ? AND timestamp >= ?
            ORDER BY timestamp ASC`,
           [phoneNumber, primerTimestamp]
@@ -81,31 +88,38 @@ app.post('/webhook', async (req, res) => {
           content: m.contenido
         }));
 
-        const conocimiento_dinurba = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
-        const instrucciones = conocimiento_dinurba.instrucciones_respuesta || [];
+        // 4. Preparar sistema y conocimiento
+        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
+        const instrucciones = conocimiento.instrucciones_respuesta || [];
 
         const sistema = [
-          {
-            role: "system",
-            content: conocimiento_dinurba.contexto_negocio || "Eres un asistente virtual de Dinurba."
-          },
+          { role: "system", content: conocimiento.contexto_negocio || "Eres un asistente virtual de Dinurba." },
           ...instrucciones.map(instr => ({ role: "system", content: instr }))
         ];
 
+        // 5. Si hay mensaje citado, insertarlo como contexto adicional
         let citado = null;
         if (quotedId) {
-          const mensajeCitado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
-          if (mensajeCitado) {
-            const quien = mensajeCitado.rol === 'user' ? 'el cliente' : 'Dinurba';
+          const citadoDB = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
+          if (citadoDB) {
+            const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
             citado = {
               role: 'system',
-              content: `El cliente citó un mensaje anterior de ${quien}: "${mensajeCitado.contenido}". Su mensaje actual es: "${messageText}". Si el mensaje actual pregunta qué dice el mensaje citado, responde directamente con el contenido del mensaje citado. De lo contrario, responde considerando la relación entre ambos mensajes.`
+              content: `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
+            };
+          } else {
+            citado = {
+              role: 'system',
+              content: `El cliente está respondiendo a un mensaje anterior que no se encontró. Su mensaje fue: "${messageText}".`
             };
           }
         }
 
-        const contexto = citado ? [...sistema, citado, ...historial] : [...sistema, ...historial];
+        const contexto = citado
+          ? [...sistema, citado, ...historial]
+          : [...sistema, ...historial];
 
+        // 6. Obtener respuesta de IA
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
@@ -122,14 +136,13 @@ app.post('/webhook', async (req, res) => {
 
         const respuesta = respuestaIA.data.choices[0].message.content;
 
-        const whatsappResponse = await axios.post(
+        // 7. Enviar respuesta a WhatsApp
+        const respuestaWa = await axios.post(
           `https://graph.facebook.com/v18.0/${value.metadata.phone_number_id}/messages`,
           {
             messaging_product: "whatsapp",
             to: phoneNumber,
-            text: {
-              body: "🤖 " + respuesta
-            }
+            text: { body: "🤖 " + respuesta }
           },
           {
             headers: {
@@ -139,16 +152,17 @@ app.post('/webhook', async (req, res) => {
           }
         );
 
-        const respuestaWaId = whatsappResponse.data.messages?.[0]?.id || null;
+        // 8. Guardar respuesta en la base de datos
+        const respuestaId = respuestaWa.data.messages?.[0]?.id || null;
 
         await db.run(
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
-          [respuestaWaId, phoneNumber, 'dinurba', respuesta, Date.now() / 1000]
+          [respuestaId, phoneNumber, 'dinurba', respuesta, Date.now() / 1000]
         );
 
         console.log("✅ Respuesta enviada a WhatsApp.");
       } catch (error) {
-        console.error("❌ Error enviando mensaje a WhatsApp o generando respuesta de IA:", error.response?.data || error.message);
+        console.error("❌ Error:", error.response?.data || error.message);
       }
     }
 
