@@ -78,7 +78,7 @@ app.post('/webhook', async (req, res) => {
           [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
 
-        // Enviar datos recibidos
+        // Enviar datos básicos por WhatsApp
         let info = `🧾 wa_id recibido:\n${wa_id}`;
         if (quotedId) {
           info += `\n📎 quotedId (context.id) recibido:\n${quotedId}`;
@@ -86,7 +86,7 @@ app.post('/webhook', async (req, res) => {
         }
         await enviarMensajeWhatsApp(phoneNumber, info, phone_id);
 
-        // Obtener historial reciente
+        // Obtener historial
         const seisMeses = 60 * 60 * 24 * 30 * 6;
         const desde = Date.now() / 1000 - seisMeses;
 
@@ -108,14 +108,14 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, primerTimestamp]
         );
 
+        // Cargar conocimiento
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
         const sistema = conocimiento.map(instr => ({
           role: "system",
           content: instr
         }));
 
-        let citado = null;
-
+        // Si hay cita, generar bloque y guardarlo en BD
         if (quotedId) {
           let citadoDB = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
 
@@ -126,63 +126,42 @@ app.post('/webhook', async (req, res) => {
 
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
+
             await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citadoDB.contenido}"`, phone_id);
 
+            let bloqueCita = "";
+
             if (messageText.toLowerCase().includes("literalmente")) {
-              citado = {
-                role: 'system',
-                content: `El cliente pidió conocer el contenido literal de un mensaje citado. Este fue el mensaje citado: "${citadoDB.contenido}". No agregues nada más.`
-              };
+              bloqueCita = `El cliente pidió conocer el contenido literal de un mensaje citado. Este fue el mensaje citado: "${citadoDB.contenido}". No agregues nada más.`;
             } else {
-              citado = {
-                role: 'system',
-                content: `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
-              };
+              bloqueCita = `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`;
             }
 
-            await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system para IA:\n${citado.content}`, phone_id);
+            // Guardar bloque system como mensaje con rol "system"
+            await db.run(
+              'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
+              [`system-${wa_id}`, phoneNumber, 'system', bloqueCita, timestamp]
+            );
+
+            await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloqueCita}`, phone_id);
           }
         }
 
-        // Preparar historial con wa_id incluido
-        const historialConIds = allMessages.map(m => ({
-          role: m.rol === 'user' ? 'user' : 'assistant',
-          content: m.contenido,
-          wa_id: m.wa_id
-        }));
-
+        // Construir contexto final para la IA
         let contexto = [...sistema];
 
-        if (quotedId && citado) {
-          const nuevoHistorial = [];
+        const historialPlano = allMessages.map(msg => ({
+          role: msg.rol === 'user' ? 'user' :
+                msg.rol === 'assistant' ? 'assistant' :
+                msg.rol === 'system' ? 'system' : 'assistant',
+          content: msg.contenido
+        }));
 
-          for (const msg of historialConIds) {
-            if (msg.wa_id === wa_id) {
-              nuevoHistorial.push({
-                role: 'system',
-                content: citado.content
-              });
-            } else {
-              nuevoHistorial.push({
-                role: msg.role,
-                content: msg.content
-              });
-            }
-          }
+        contexto.push(...historialPlano);
 
-          contexto.push(...nuevoHistorial);
-        } else {
-          const historialPlano = historialConIds.map(msg => ({
-            role: msg.role,
-            content: msg.content
-          }));
-          contexto.push(...historialPlano);
-        }
-
-        // Enviar contexto completo por WhatsApp
         await enviarMensajeWhatsApp(phoneNumber, `🧠 Contexto enviado a la IA:\n\`\`\`\n${JSON.stringify(contexto, null, 2)}\n\`\`\``, phone_id);
 
-        // Obtener respuesta de OpenAI
+        // Enviar a OpenAI
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
