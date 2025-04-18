@@ -146,6 +146,9 @@ app.post('/webhook', async (req, res) => {
         if (citado) contexto.push(citado);
         contexto.push(...historial);
 
+        // Enviar todo el contexto como JSON plano para verificación
+        await enviarMensajeWhatsApp(phoneNumber, `📦 Contexto enviado a la IA:\n${JSON.stringify(contexto, null, 2)}`, phone_id);
+
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
@@ -213,4 +216,3 @@ app.get('/webhook', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
 });
-
