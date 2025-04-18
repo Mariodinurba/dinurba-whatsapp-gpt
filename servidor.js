@@ -10,7 +10,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const ASSISTANT_ID = 'asst_lXExYWFnqSP6ORLicaGonUTi';
+const ASSISTANT_ID = 'asst_WXEwYWFnqSP60RLicaGonUIi';
 
 // ==================== Base de datos ====================
 let db;
