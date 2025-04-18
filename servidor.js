@@ -6,7 +6,7 @@ const { open } = require('sqlite');
 require('dotenv').config();
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
@@ -32,7 +32,6 @@ const openDB = async () => {
       )
     `);
   }
-
   return db;
 };
 
@@ -54,8 +53,12 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
 };
 
 app.post('/webhook', async (req, res) => {
-  const body = req.body;
+  if (!req.body || Object.keys(req.body).length === 0) {
+    console.warn('⚠️ Webhook recibido sin cuerpo');
+    return res.sendStatus(400);
+  }
 
+  const body = req.body;
   if (body.object) {
     const entry = body.entry?.[0];
     const changes = entry?.changes?.[0];
@@ -115,46 +118,34 @@ app.post('/webhook', async (req, res) => {
         }));
 
         const historial = [];
+        const citas = [];
 
         for (const m of allMessages) {
-          if (m.rol === 'user') {
-            // Buscar si este mensaje fue una cita de otro mensaje
-            const mensajeOriginal = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [m.wa_id]);
-            const fueCita = allMessages.some(msj => msj.context_id === m.wa_id);
+          const citadoPorEste = m.wa_id === quotedId;
 
+          if (m.rol === 'user') {
+            const fueCita = m.wa_id === quotedId;
             if (!fueCita) {
               historial.push({ role: 'user', content: m.contenido });
             }
           } else {
             historial.push({ role: 'assistant', content: m.contenido });
           }
-        }
 
-        const citas = [];
-
-        if (quotedId) {
-          let citadoDB = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
-
-          if (!citadoDB) {
-            await new Promise(resolve => setTimeout(resolve, 300));
-            citadoDB = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
-          }
-
-          if (citadoDB) {
-            const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
+          if (quotedId && m.wa_id === quotedId) {
+            const quien = m.rol === 'user' ? 'el cliente' : 'Dinurba';
             const bloqueCita = {
               role: 'system',
-              content: `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
+              content: `El cliente citó un mensaje anterior de ${quien}: "${m.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
             };
             citas.push(bloqueCita);
-            await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n🧾 "${citadoDB.contenido}"`, phone_id);
+
+            await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n🧾 "${m.contenido}"`, phone_id);
             await enviarMensajeWhatsApp(phoneNumber, `🧠 Bloque system para IA:\n${bloqueCita.content}`, phone_id);
-          } else {
-            await enviarMensajeWhatsApp(phoneNumber, "⚠️ Mensaje citado no encontrado en la base de datos.", phone_id);
           }
         }
 
-        const contexto = [...sistema, ...historial, ...citas];
+        const contexto = [...sistema, ...citas, ...historial];
 
         await enviarMensajeWhatsApp(phoneNumber, `📦 Contexto enviado a la IA:\n${JSON.stringify(contexto, null, 2)}`, phone_id);
 
@@ -199,7 +190,7 @@ app.post('/webhook', async (req, res) => {
       } catch (error) {
         const errorMsg = error.response?.data?.error?.message || error.message;
         console.error("❌ Error:", errorMsg);
-        await enviarMensajeWhatsApp(phoneNumber, `❌ Error: ${errorMsg}`, value?.metadata?.phone_number_id);
+        await enviarMensajeWhatsApp(phoneNumber, `❌ Error: ${errorMsg}`, phone_id);
       }
     }
 
