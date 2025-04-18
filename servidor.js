@@ -73,12 +73,6 @@ app.post('/webhook', async (req, res) => {
       try {
         const db = await openDB();
 
-        console.log(`🧾 wa_id recibido: ${wa_id}`);
-        if (quotedId) {
-          console.log(`📎 quotedId (context.id) recibido: ${quotedId}`);
-          console.log(`🔍 Buscando mensaje con wa_id = ${quotedId}`);
-        }
-
         await db.run(
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
           [wa_id, phoneNumber, 'user', messageText, timestamp]
@@ -109,8 +103,6 @@ app.post('/webhook', async (req, res) => {
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
 
-            console.log(`✅ Mensaje citado encontrado: "${citadoDB.contenido}"`);
-
             let bloqueCita = "";
 
             if (messageText.toLowerCase().includes("literalmente")) {
@@ -123,8 +115,6 @@ app.post('/webhook', async (req, res) => {
               'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
               [`system-${wa_id}`, phoneNumber, 'system', bloqueCita, timestamp]
             );
-
-            console.log(`🤖 Bloque system guardado: ${bloqueCita}`);
 
             await db.run(
               'UPDATE conversaciones SET rol = ? WHERE wa_id = ?',
@@ -157,9 +147,6 @@ app.post('/webhook', async (req, res) => {
         }));
 
         contexto.push(...historialPlano);
-
-        console.log("🧠 Contexto enviado a la IA:");
-        console.log(JSON.stringify(contexto, null, 2));
 
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
