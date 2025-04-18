@@ -25,8 +25,7 @@ const openDB = async () => {
       numero TEXT,
       rol TEXT,
       contenido TEXT,
-      timestamp INTEGER,
-      message_id TEXT
+      timestamp INTEGER
     )
   `);
 
@@ -47,8 +46,7 @@ app.post('/webhook', async (req, res) => {
       const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
-      const quotedId = messageObject.context?.id || messageObject.context?.message_id || null;
-      const messageId = messageObject.id;
+      const quotedMessageId = messageObject.context?.id || null;
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
@@ -56,8 +54,8 @@ app.post('/webhook', async (req, res) => {
         const db = await openDB();
 
         await db.run(
-          'INSERT INTO conversaciones (numero, rol, contenido, timestamp, message_id) VALUES (?, ?, ?, ?, ?)',
-          [phoneNumber, 'user', messageText, timestamp, messageId]
+          'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
+          [phoneNumber, 'user', messageText, timestamp]
         );
 
         const userMessages = await db.all(
@@ -81,13 +79,13 @@ app.post('/webhook', async (req, res) => {
           content: m.contenido
         }));
 
-        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
-        const instrucciones = conocimiento.instrucciones_respuesta || [];
+        const conocimiento_dinurba = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
+        const instrucciones = conocimiento_dinurba.instrucciones_respuesta || [];
 
         const sistema = [
           {
             role: "system",
-            content: conocimiento.contexto_negocio || "Eres un asistente virtual de Dinurba."
+            content: conocimiento_dinurba.contexto_negocio || "Eres un asistente virtual de Dinurba."
           },
           ...instrucciones.map(instr => ({
             role: "system",
@@ -96,14 +94,13 @@ app.post('/webhook', async (req, res) => {
         ];
 
         let citado = null;
-
-        if (quotedId) {
-          const citadoDB = await db.get('SELECT * FROM conversaciones WHERE message_id = ?', [quotedId]);
-          if (citadoDB) {
-            const autor = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
+        if (quotedMessageId) {
+          const mensajeCitado = await db.get('SELECT * FROM conversaciones WHERE id = ?', [quotedMessageId]);
+          if (mensajeCitado) {
+            const quien = mensajeCitado.rol === 'user' ? 'el cliente' : 'Dinurba';
             citado = {
               role: 'system',
-              content: `El cliente citó el siguiente mensaje de ${autor}: "${citadoDB.contenido}". Su mensaje actual es: "${messageText}". Responde directamente a la pregunta o mensaje actual basándote en el contenido del mensaje citado.`
+              content: `El cliente citó el siguiente mensaje de ${quien}: "${mensajeCitado.contenido}". Luego escribió: "${messageText}". Interpreta ambos mensajes juntos y responde en consecuencia.`
             };
           }
         }
@@ -126,11 +123,9 @@ app.post('/webhook', async (req, res) => {
 
         const respuesta = respuestaIA.data.choices[0].message.content;
 
-        const respuestaMessageId = `response_${Date.now()}_${Math.random().toString(36).substring(2)}`;
-
         await db.run(
-          'INSERT INTO conversaciones (numero, rol, contenido, timestamp, message_id) VALUES (?, ?, ?, ?, ?)',
-          [phoneNumber, 'dinurba', respuesta, Date.now() / 1000, respuestaMessageId]
+          'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
+          [phoneNumber, 'dinurba', respuesta, Date.now() / 1000]
         );
 
         await axios.post(
