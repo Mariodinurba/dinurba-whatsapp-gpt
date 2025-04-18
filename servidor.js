@@ -1,4 +1,3 @@
-// servidor.js
 const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
@@ -99,7 +98,7 @@ app.post('/webhook', async (req, res) => {
             const quien = mensajeCitado.rol === 'user' ? 'el cliente' : 'Dinurba';
             citado = {
               role: 'system',
-              content: `El cliente citó un mensaje anterior de ${quien}: "${mensajeCitado.contenido}". Luego escribió: "${messageText}". Responde considerando la relación entre ambos mensajes.`
+              content: `El cliente citó el siguiente mensaje de ${quien}: "${mensajeCitado.contenido}". Su mensaje actual es: "${messageText}". Responde directamente a la pregunta o mensaje actual basándote en el contenido del mensaje citado.`
             };
           }
         }
