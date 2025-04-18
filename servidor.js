@@ -12,7 +12,8 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ASSISTANT_ID = 'asst_NSwFHnPDYNWpuC9Yys5UozJR';
 
-// Base de datos SQLite
+// ==================== Base de datos ====================
+
 let db;
 const openDB = async () => {
   if (!db) {
@@ -35,7 +36,8 @@ const openDB = async () => {
   return db;
 };
 
-// Enviar mensaje por WhatsApp
+// ==================== WhatsApp ====================
+
 const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
   await axios.post(
     `https://graph.facebook.com/v18.0/${phone_id}/messages`,
@@ -53,7 +55,8 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
   );
 };
 
-// Webhook de recepción
+// ==================== Webhook POST ====================
+
 app.post('/webhook', async (req, res) => {
   const body = req.body;
 
@@ -84,23 +87,24 @@ app.post('/webhook', async (req, res) => {
       [wa_id, phoneNumber, 'user', messageText, timestamp]
     );
 
-    // === Crear conversación con el Assistant ===
+    // ==================== Assistant API ====================
 
-    // 1. Crear thread
+    // 1. Crear un thread
     const thread = await axios.post(
       'https://api.openai.com/v1/threads',
       {},
       {
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
         }
       }
     );
 
     const thread_id = thread.data.id;
 
-    // 2. Agregar mensaje del usuario
+    // 2. Agregar el mensaje del usuario al thread
     await axios.post(
       `https://api.openai.com/v1/threads/${thread_id}/messages`,
       {
@@ -110,12 +114,13 @@ app.post('/webhook', async (req, res) => {
       {
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
         }
       }
     );
 
-    // 3. Ejecutar Assistant
+    // 3. Ejecutar el assistant
     const run = await axios.post(
       `https://api.openai.com/v1/threads/${thread_id}/runs`,
       {
@@ -124,32 +129,39 @@ app.post('/webhook', async (req, res) => {
       {
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
         }
       }
     );
 
     const run_id = run.data.id;
 
-    // 4. Esperar respuesta del Assistant (polling)
+    // 4. Esperar a que el run finalice (polling)
     let status = "queued";
     while (status !== "completed" && status !== "failed") {
       await new Promise(resolve => setTimeout(resolve, 1000));
-      const runCheck = await axios.get(
+      const check = await axios.get(
         `https://api.openai.com/v1/threads/${thread_id}/runs/${run_id}`,
         {
-          headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            'OpenAI-Beta': 'assistants=v2'
+          }
         }
       );
-      status = runCheck.data.status;
+      status = check.data.status;
     }
 
-    // 5. Obtener respuesta final
+    // 5. Obtener la respuesta final
     if (status === "completed") {
       const messages = await axios.get(
         `https://api.openai.com/v1/threads/${thread_id}/messages`,
         {
-          headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            'OpenAI-Beta': 'assistants=v2'
+          }
         }
       );
 
@@ -175,7 +187,8 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
-// Webhook de verificación
+// ==================== Webhook GET ====================
+
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -189,7 +202,8 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-// Iniciar servidor
+// ==================== Iniciar servidor ====================
+
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
 });
