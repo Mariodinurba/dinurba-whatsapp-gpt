@@ -97,11 +97,9 @@ app.post('/webhook', async (req, res) => {
 
         const contexto = [...sistema];
         const wa_idsCitados = [];
-        const bloques = [];
 
         for (let i = 0; i < allMessages.length; i++) {
           const m = allMessages[i];
-
           if (m.wa_id === quotedId) {
             wa_idsCitados.push(m.wa_id);
           }
@@ -111,7 +109,7 @@ app.post('/webhook', async (req, res) => {
           const m = allMessages[i];
 
           if (m.rol === 'user' && wa_idsCitados.includes(m.wa_id)) {
-            continue; // No insertar mensajes ya explicados por bloque "system"
+            continue;
           }
 
           contexto.push({ role: m.rol === 'user' ? 'user' : 'assistant', content: m.contenido });
@@ -125,12 +123,20 @@ app.post('/webhook', async (req, res) => {
                 content: `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
               };
               contexto.push(bloque);
-              await enviarMensajeWhatsApp(phoneNumber, `📌 Bloque generado para IA:\n${bloque.content}`, phone_id);
+              await enviarMensajeWhatsApp(
+                phoneNumber,
+                `Bloque generado para IA:\n${JSON.stringify(bloque, null, 2)}`,
+                phone_id
+              );
             }
           }
         }
 
-        await enviarMensajeWhatsApp(phoneNumber, `📦 Contexto final enviado a la IA:\n${JSON.stringify(contexto, null, 2)}`, phone_id);
+        await enviarMensajeWhatsApp(
+          phoneNumber,
+          `📦 Contexto final enviado a la IA:\n${JSON.stringify(contexto, null, 2)}`,
+          phone_id
+        );
 
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
