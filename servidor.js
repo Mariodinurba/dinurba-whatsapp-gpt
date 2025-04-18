@@ -90,15 +90,6 @@ app.post('/webhook', async (req, res) => {
         const seisMeses = 60 * 60 * 24 * 30 * 6;
         const desde = Date.now() / 1000 - seisMeses;
 
-        // Obtenemos todos los mensajes system de este usuario (independientemente del tiempo)
-        // Esto asegura que mantenemos todos los bloques system generados por citas previas
-        const systemMessages = await db.all(
-          `SELECT * FROM conversaciones 
-           WHERE numero = ? AND rol = 'system'
-           ORDER BY timestamp ASC`,
-          [phoneNumber]
-        );
-
         const userMessages = await db.all(
           `SELECT * FROM conversaciones 
            WHERE numero = ? AND rol = 'user' AND timestamp >= ?
@@ -109,21 +100,6 @@ app.post('/webhook', async (req, res) => {
         const primerTimestamp = userMessages.length > 0
           ? userMessages[userMessages.length - 1].timestamp
           : Date.now() / 1000;
-
-        // Ahora obtenemos los mensajes user y assistant desde el primer timestamp
-        const conversationMessages = await db.all(
-          `SELECT * FROM conversaciones
-           WHERE numero = ? AND timestamp >= ? AND rol != 'system'
-           ORDER BY timestamp ASC`,
-          [phoneNumber, primerTimestamp]
-        );
-
-        // Cargar conocimiento
-        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
-        const sistema = conocimiento.map(instr => ({
-          role: "system",
-          content: instr
-        }));
 
         // Si hay cita, generar bloque y guardarlo en BD
         if (quotedId) {
@@ -154,33 +130,34 @@ app.post('/webhook', async (req, res) => {
             );
 
             await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloqueCita}`, phone_id);
-            
-            // Actualizamos la lista de mensajes system para incluir el recién creado
-            systemMessages.push({
-              wa_id: `system-${wa_id}`,
-              numero: phoneNumber,
-              rol: 'system',
-              contenido: bloqueCita,
-              timestamp: timestamp
-            });
           }
         }
+
+        // Obtenemos TODOS los mensajes (user, assistant y system) en orden cronológico
+        // Esto nos permite mantener el contexto cronológico completo
+        const allMessages = await db.all(
+          `SELECT * FROM conversaciones
+           WHERE numero = ? AND timestamp >= ?
+           ORDER BY timestamp ASC`,
+          [phoneNumber, primerTimestamp]
+        );
+
+        // Cargar conocimiento
+        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
+        const sistema = conocimiento.map(instr => ({
+          role: "system",
+          content: instr
+        }));
 
         // Construir contexto final para la IA
         let contexto = [...sistema];
 
-        // Agregamos todos los mensajes system (incluidos los de citas previas)
-        const systemBlocks = systemMessages.map(msg => ({
-          role: 'system',
-          content: msg.contenido
-        }));
-        
-        contexto.push(...systemBlocks);
-
-        // Agregamos los mensajes regulares de la conversación
-        const historialPlano = conversationMessages.map(msg => ({
+        // Agregamos todos los mensajes en orden cronológico
+        const historialPlano = allMessages.map(msg => ({
           role: msg.rol === 'user' ? 'user' : 
-                msg.rol === 'assistant' ? 'assistant' : 'assistant',
+                msg.rol === 'assistant' ? 'assistant' : 
+                msg.rol === 'system' ? 'system' : 
+                msg.rol === 'dinurba' ? 'assistant' : 'assistant',
           content: msg.contenido
         }));
 
