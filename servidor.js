@@ -5,6 +5,31 @@ const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 require('dotenv').config();
 
+const app = express();
+app.use(express.json({ limit: '1mb' }));
+
+const PORT = process.env.PORT || 3000;
+const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+let db;
+
+const openDB = async () => {
+  if (!db) {
+    db = await open({
+      filename: './conversaciones.db',
+      driver: sqlite3.Database
+    });
+
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS conversaciones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        wa_id TEXT,
+        numero TEXT,
+        rol TEXT,
+        contenido TEXT,
+        timestamp INTEGER
+      )
     `);
   }
   return db;
