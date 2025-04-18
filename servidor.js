@@ -72,23 +72,18 @@ app.post('/webhook', async (req, res) => {
 
       try {
         const db = await openDB();
-        
-        // IMPORTANTE: Siempre guardamos el mensaje del usuario primero como 'user'
-        // Esto garantiza que aparezca en el contexto desde el primer mensaje
+
+        console.log(`🧾 wa_id recibido: ${wa_id}`);
+        if (quotedId) {
+          console.log(`📎 quotedId (context.id) recibido: ${quotedId}`);
+          console.log(`🔍 Buscando mensaje con wa_id = ${quotedId}`);
+        }
+
         await db.run(
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
           [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
 
-        // Enviar datos básicos por WhatsApp
-        let info = `🧾 wa_id recibido:\n${wa_id}`;
-        if (quotedId) {
-          info += `\n📎 quotedId (context.id) recibido:\n${quotedId}`;
-          info += `\n🔍 Buscando mensaje con wa_id =\n${quotedId}`;
-        }
-        await enviarMensajeWhatsApp(phoneNumber, info, phone_id);
-
-        // Obtener historial
         const seisMeses = 60 * 60 * 24 * 30 * 6;
         const desde = Date.now() / 1000 - seisMeses;
 
@@ -103,7 +98,6 @@ app.post('/webhook', async (req, res) => {
           ? userMessages[userMessages.length - 1].timestamp
           : Date.now() / 1000;
 
-        // Si hay cita, generar bloque y guardarlo en BD
         if (quotedId) {
           let citadoDB = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
 
@@ -115,7 +109,7 @@ app.post('/webhook', async (req, res) => {
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
 
-            await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citadoDB.contenido}"`, phone_id);
+            console.log(`✅ Mensaje citado encontrado: "${citadoDB.contenido}"`);
 
             let bloqueCita = "";
 
@@ -125,15 +119,13 @@ app.post('/webhook', async (req, res) => {
               bloqueCita = `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`;
             }
 
-            // Guardar bloque system como mensaje con rol "system"
             await db.run(
               'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
               [`system-${wa_id}`, phoneNumber, 'system', bloqueCita, timestamp]
             );
 
-            await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloqueCita}`, phone_id);
-            
-            // Cambiamos el rol del mensaje que acabamos de guardar para evitar duplicidad
+            console.log(`🤖 Bloque system guardado: ${bloqueCita}`);
+
             await db.run(
               'UPDATE conversaciones SET rol = ? WHERE wa_id = ?',
               ['user_omitido', wa_id]
@@ -141,8 +133,6 @@ app.post('/webhook', async (req, res) => {
           }
         }
 
-        // Obtenemos todos los mensajes relevantes para el contexto
-        // Excluimos los mensajes marcados como 'user_omitido'
         const allMessages = await db.all(
           `SELECT * FROM conversaciones
            WHERE numero = ? AND timestamp >= ? AND rol != 'user_omitido'
@@ -150,17 +140,14 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, primerTimestamp]
         );
 
-        // Cargar conocimiento
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
         const sistema = conocimiento.map(instr => ({
           role: "system",
           content: instr
         }));
 
-        // Construir contexto final para la IA
         let contexto = [...sistema];
 
-        // Agregamos todos los mensajes en orden cronológico
         const historialPlano = allMessages.map(msg => ({
           role: msg.rol === 'user' ? 'user' : 
                 msg.rol === 'assistant' ? 'assistant' : 
@@ -171,9 +158,9 @@ app.post('/webhook', async (req, res) => {
 
         contexto.push(...historialPlano);
 
-        await enviarMensajeWhatsApp(phoneNumber, `🧠 Contexto enviado a la IA:\n\`\`\`\n${JSON.stringify(contexto, null, 2)}\n\`\`\``, phone_id);
+        console.log("🧠 Contexto enviado a la IA:");
+        console.log(JSON.stringify(contexto, null, 2));
 
-        // Enviar a OpenAI
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
