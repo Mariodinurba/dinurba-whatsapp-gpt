@@ -70,6 +70,8 @@ app.post('/webhook', async (req, res) => {
       const wa_id = messageObject.id;
       const quotedId = messageObject.context?.id || null;
 
+      if (!messageText) return res.sendStatus(200);
+
       try {
         const db = await openDB();
 
@@ -103,13 +105,7 @@ app.post('/webhook', async (req, res) => {
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
 
-            let bloqueCita = "";
-
-            if (messageText.toLowerCase().includes("literalmente")) {
-              bloqueCita = `El cliente pidió conocer el contenido literal de un mensaje citado. Este fue el mensaje citado: "${citadoDB.contenido}". No agregues nada más.`;
-            } else {
-              bloqueCita = `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`;
-            }
+            const bloqueCita = `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Interpreta la relación entre ambos. Si el cliente solo quiere saber qué decía exactamente el mensaje citado, responde solo el texto citado.`;
 
             await db.run(
               'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
