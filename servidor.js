@@ -78,16 +78,6 @@ app.post('/webhook', async (req, res) => {
           [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
 
-        let quotedInfo = `📝 wa_id recibido: ${wa_id}`;
-        if (quotedId) {
-          quotedInfo += `\n📎 quotedId (context.id) recibido: ${quotedId}`;
-          quotedInfo += `\n🔍 Buscando mensaje con wa_id = ${quotedId}`;
-        }
-
-        if (quotedInfo) {
-          await enviarMensajeWhatsApp(phoneNumber, quotedInfo, phone_id);
-        }
-
         const seisMeses = 60 * 60 * 24 * 30 * 6;
         const desde = Date.now() / 1000 - seisMeses;
 
@@ -132,6 +122,11 @@ app.post('/webhook', async (req, res) => {
 
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
+
+            // ✅ Enviar mensaje citado al cliente
+            await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citadoDB.contenido}"`, phone_id);
+
+            // ✅ Crear y enviar bloque system generado
             if (messageText.toLowerCase().includes("literalmente")) {
               citado = {
                 role: 'system',
@@ -143,6 +138,8 @@ app.post('/webhook', async (req, res) => {
                 content: `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
               };
             }
+
+            await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system para IA:\n${citado.content}`, phone_id);
           }
         }
 
