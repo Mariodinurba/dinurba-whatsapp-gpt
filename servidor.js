@@ -87,13 +87,12 @@ app.post('/webhook', async (req, res) => {
           content: m.contenido
         }));
 
+        // 🧠 Leer el archivo como arreglo plano
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
-        const instrucciones = conocimiento.instrucciones_respuesta || [];
-
-        const sistema = [
-          { role: "system", content: conocimiento.contexto_negocio || "Eres un asistente virtual de Dinurba." },
-          ...instrucciones.map(instr => ({ role: "system", content: instr }))
-        ];
+        const sistema = conocimiento.map(instr => ({
+          role: "system",
+          content: instr
+        }));
 
         // 👇 Procesar mensaje citado (si existe)
         let citado = null;
