@@ -97,11 +97,12 @@ app.post('/webhook', async (req, res) => {
           ...instrucciones.map(instr => ({ role: "system", content: instr }))
         ];
 
-        // 🔎 Buscar mensaje citado con reintento
+        // 🔍 Carga del mensaje citado
         let citado = null;
-        if (quotedId) {
-          console.log("📌 quotedId recibido:", quotedId);
+        let mensajeCitadoTexto = null;
+        console.log("📌 quotedId recibido:", quotedId);
 
+        if (quotedId) {
           let citadoDB = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
 
           if (!citadoDB) {
@@ -112,10 +113,11 @@ app.post('/webhook', async (req, res) => {
 
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
-            console.log("✅ Mensaje citado encontrado:", citadoDB.contenido);
+            mensajeCitadoTexto = citadoDB.contenido;
+            console.log("✅ Mensaje citado encontrado:", mensajeCitadoTexto);
             citado = {
               role: 'system',
-              content: `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
+              content: `El cliente citó un mensaje anterior de ${quien}: "${mensajeCitadoTexto}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
             };
           } else {
             console.log("⚠️ No se encontró el mensaje citado.");
@@ -144,7 +146,15 @@ app.post('/webhook', async (req, res) => {
           }
         );
 
-        const respuesta = respuestaIA.data.choices[0].message.content;
+        const respuestaGenerada = respuestaIA.data.choices[0].message.content;
+
+        // 🔧 Armar texto DEBUG para WhatsApp
+        let debugText = `\n\n[🔍 DEBUG]\nquotedId recibido: ${quotedId || 'Ninguno'}`;
+        if (mensajeCitadoTexto) {
+          debugText += `\nMensaje citado encontrado: "${mensajeCitadoTexto}"`;
+        }
+
+        let respuesta = respuestaGenerada + debugText;
 
         const respuestaWa = await axios.post(
           `https://graph.facebook.com/v18.0/${value.metadata.phone_number_id}/messages`,
@@ -162,7 +172,12 @@ app.post('/webhook', async (req, res) => {
         );
 
         const respuestaId = respuestaWa.data.messages?.[0]?.id || null;
+        console.log("🟢 ID de mensaje enviado:", respuestaId);
 
+        // Agregar ID de mensaje enviado al texto que va por WhatsApp
+        respuesta += `\nID de la respuesta enviada por el bot: ${respuestaId}`;
+
+        // Guardar respuesta final (ya con ID correcto)
         await db.run(
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
           [respuestaId, phoneNumber, 'dinurba', respuesta, Date.now() / 1000]
