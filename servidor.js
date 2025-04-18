@@ -82,11 +82,10 @@ app.post('/webhook', async (req, res) => {
 
         let quotedInfo = `📝 wa_id recibido: ${wa_id}`;
         if (quotedId) {
-          quotedInfo += `\n📎 quotedId (context.id): ${quotedId}`;
-          quotedInfo += `\n🔍 Buscando mensaje citado con wa_id: ${quotedId}`;
+          quotedInfo += `\n📎 quotedId (context.id) recibido: ${quotedId}`;
+          quotedInfo += `\n🔍 Buscando mensaje con wa_id = ${quotedId}`;
         }
 
-        // Mensaje informativo inicial
         if (quotedInfo) {
           await enviarMensajeWhatsApp(phoneNumber, quotedInfo, phone_id);
         }
@@ -136,8 +135,6 @@ app.post('/webhook', async (req, res) => {
 
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
-            await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n🧾 "${citadoDB.contenido}"`, phone_id);
-
             if (messageText.toLowerCase().includes("literalmente")) {
               citado = {
                 role: 'system',
@@ -149,8 +146,6 @@ app.post('/webhook', async (req, res) => {
                 content: `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
               };
             }
-          } else {
-            await enviarMensajeWhatsApp(phoneNumber, "⚠️ Mensaje citado no encontrado en la base de datos.", phone_id);
           }
         }
 
