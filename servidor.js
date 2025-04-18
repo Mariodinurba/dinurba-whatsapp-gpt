@@ -82,33 +82,14 @@ app.post('/webhook', async (req, res) => {
           [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
 
-        let quotedInfo = `📝 wa_id recibido: ${wa_id}`;
-        if (quotedId) {
-          quotedInfo += `\n📎 quotedId (context.id) recibido: ${quotedId}`;
-          quotedInfo += `\n🔍 Buscando mensaje con wa_id = ${quotedId}`;
-        }
-
-        await enviarMensajeWhatsApp(phoneNumber, quotedInfo, phone_id);
-
         const seisMeses = 60 * 60 * 24 * 30 * 6;
         const desde = Date.now() / 1000 - seisMeses;
-
-        const userMessages = await db.all(
-          `SELECT * FROM conversaciones 
-           WHERE numero = ? AND rol = 'user' AND timestamp >= ?
-           ORDER BY timestamp DESC LIMIT 30`,
-          [phoneNumber, desde]
-        );
-
-        const primerTimestamp = userMessages.length > 0
-          ? userMessages[userMessages.length - 1].timestamp
-          : Date.now() / 1000;
 
         const allMessages = await db.all(
           `SELECT * FROM conversaciones
            WHERE numero = ? AND timestamp >= ?
            ORDER BY timestamp ASC`,
-          [phoneNumber, primerTimestamp]
+          [phoneNumber, desde]
         );
 
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
@@ -117,35 +98,44 @@ app.post('/webhook', async (req, res) => {
           content: instr
         }));
 
-        const historial = [];
-        const citas = [];
+        const contexto = [...sistema];
+        const bloques = [];
 
-        for (const m of allMessages) {
-          const citadoPorEste = m.wa_id === quotedId;
+        for (let i = 0; i < allMessages.length; i++) {
+          const m = allMessages[i];
 
-          if (m.rol === 'user') {
-            const fueCita = m.wa_id === quotedId;
-            if (!fueCita) {
-              historial.push({ role: 'user', content: m.contenido });
+          // Identificamos si este mensaje fue una cita
+          const esCita = m.rol === 'user' && allMessages.some(msj => msj.context_id === m.wa_id);
+          const esMensajeActualCitando = m.rol === 'user' && m.id === wa_id && quotedId;
+
+          if (esMensajeActualCitando) {
+            const citado = allMessages.find(msg => msg.wa_id === quotedId);
+            if (citado) {
+              const quien = citado.rol === 'user' ? 'el cliente' : 'Dinurba';
+              const bloque = {
+                role: 'system',
+                content: `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Luego escribió: "${m.contenido}". Responde interpretando la relación entre ambos.`,
+                timestamp: m.timestamp
+              };
+              bloques.push(bloque);
+
+              await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n🧾 "${citado.contenido}"`, phone_id);
+              await enviarMensajeWhatsApp(phoneNumber, `🧠 Bloque system para IA:\n${bloque.content}`, phone_id);
             }
-          } else {
-            historial.push({ role: 'assistant', content: m.contenido });
+          } else if (!quotedId || m.id !== wa_id) {
+            // Mensaje normal que sí se debe incluir
+            contexto.push({
+              role: m.rol === 'user' ? 'user' : 'assistant',
+              content: m.contenido
+            });
           }
 
-          if (quotedId && m.wa_id === quotedId) {
-            const quien = m.rol === 'user' ? 'el cliente' : 'Dinurba';
-            const bloqueCita = {
-              role: 'system',
-              content: `El cliente citó un mensaje anterior de ${quien}: "${m.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
-            };
-            citas.push(bloqueCita);
-
-            await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n🧾 "${m.contenido}"`, phone_id);
-            await enviarMensajeWhatsApp(phoneNumber, `🧠 Bloque system para IA:\n${bloqueCita.content}`, phone_id);
+          // Insertar bloques de cita justo después del mensaje anterior no citado
+          const bloquesParaInsertar = bloques.filter(b => b.timestamp === m.timestamp);
+          for (const b of bloquesParaInsertar) {
+            contexto.push({ role: b.role, content: b.content });
           }
         }
-
-        const contexto = [...sistema, ...citas, ...historial];
 
         await enviarMensajeWhatsApp(phoneNumber, `📦 Contexto enviado a la IA:\n${JSON.stringify(contexto, null, 2)}`, phone_id);
 
