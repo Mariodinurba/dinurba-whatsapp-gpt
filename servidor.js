@@ -78,12 +78,45 @@ app.post('/webhook', async (req, res) => {
           [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
 
+        // Enviar datos básicos por WhatsApp
         let info = `🧾 wa_id recibido:\n${wa_id}`;
         if (quotedId) {
           info += `\n📎 quotedId (context.id) recibido:\n${quotedId}`;
           info += `\n🔍 Buscando mensaje con wa_id =\n${quotedId}`;
         }
         await enviarMensajeWhatsApp(phoneNumber, info, phone_id);
+
+        // Obtener historial
+        const seisMeses = 60 * 60 * 24 * 30 * 6;
+        const desde = Date.now() / 1000 - seisMeses;
+
+        // Obtenemos todos los mensajes system de este usuario (independientemente del tiempo)
+        // Esto asegura que mantenemos todos los bloques system generados por citas previas
+        const systemMessages = await db.all(
+          `SELECT * FROM conversaciones 
+           WHERE numero = ? AND rol = 'system'
+           ORDER BY timestamp ASC`,
+          [phoneNumber]
+        );
+
+        const userMessages = await db.all(
+          `SELECT * FROM conversaciones 
+           WHERE numero = ? AND rol = 'user' AND timestamp >= ?
+           ORDER BY timestamp DESC LIMIT 30`,
+          [phoneNumber, desde]
+        );
+
+        const primerTimestamp = userMessages.length > 0
+          ? userMessages[userMessages.length - 1].timestamp
+          : Date.now() / 1000;
+
+        // Ahora obtenemos los mensajes user y assistant desde el primer timestamp
+        const conversationMessages = await db.all(
+          `SELECT * FROM conversaciones
+           WHERE numero = ? AND timestamp >= ? AND rol != 'system'
+           ORDER BY timestamp ASC`,
+          [phoneNumber, primerTimestamp]
+        );
 
         // Cargar conocimiento
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
@@ -92,7 +125,7 @@ app.post('/webhook', async (req, res) => {
           content: instr
         }));
 
-        // Si hay cita, guardar bloque system generado
+        // Si hay cita, generar bloque y guardarlo en BD
         if (quotedId) {
           let citadoDB = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
 
@@ -103,6 +136,7 @@ app.post('/webhook', async (req, res) => {
 
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
+
             await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citadoDB.contenido}"`, phone_id);
 
             let bloqueCita = "";
@@ -113,44 +147,48 @@ app.post('/webhook', async (req, res) => {
               bloqueCita = `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`;
             }
 
+            // Guardar bloque system como mensaje con rol "system"
             await db.run(
               'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
               [`system-${wa_id}`, phoneNumber, 'system', bloqueCita, timestamp]
             );
 
             await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloqueCita}`, phone_id);
+            
+            // Actualizamos la lista de mensajes system para incluir el recién creado
+            systemMessages.push({
+              wa_id: `system-${wa_id}`,
+              numero: phoneNumber,
+              rol: 'system',
+              contenido: bloqueCita,
+              timestamp: timestamp
+            });
           }
         }
 
-        // Calcular timestamp correcto desde el mensaje #30 más antiguo del cliente
-        const mensajeBase = await db.get(
-          `SELECT timestamp FROM conversaciones 
-           WHERE numero = ? AND rol = 'user' AND timestamp >= ? 
-           ORDER BY timestamp ASC LIMIT 30 OFFSET 29`,
-          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
-        );
+        // Construir contexto final para la IA
+        let contexto = [...sistema];
 
-        const desdeTimestamp = mensajeBase ? mensajeBase.timestamp : Date.now() / 1000;
+        // Agregamos todos los mensajes system (incluidos los de citas previas)
+        const systemBlocks = systemMessages.map(msg => ({
+          role: 'system',
+          content: msg.contenido
+        }));
+        
+        contexto.push(...systemBlocks);
 
-        const allMessages = await db.all(
-          `SELECT * FROM conversaciones
-           WHERE numero = ? AND timestamp >= ?
-           ORDER BY timestamp ASC`,
-          [phoneNumber, desdeTimestamp]
-        );
-
-        const historialPlano = allMessages.map(msg => ({
-          role: msg.rol === 'user' ? 'user' :
-                msg.rol === 'assistant' ? 'assistant' :
-                msg.rol === 'system' ? 'system' : 'assistant',
+        // Agregamos los mensajes regulares de la conversación
+        const historialPlano = conversationMessages.map(msg => ({
+          role: msg.rol === 'user' ? 'user' : 
+                msg.rol === 'assistant' ? 'assistant' : 'assistant',
           content: msg.contenido
         }));
 
-        const contexto = [...sistema, ...historialPlano];
+        contexto.push(...historialPlano);
 
         await enviarMensajeWhatsApp(phoneNumber, `🧠 Contexto enviado a la IA:\n\`\`\`\n${JSON.stringify(contexto, null, 2)}\n\`\`\``, phone_id);
 
-        // Enviar a la IA
+        // Enviar a OpenAI
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
