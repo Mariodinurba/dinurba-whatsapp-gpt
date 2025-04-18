@@ -42,11 +42,17 @@ app.post('/webhook', async (req, res) => {
     const messageObject = value?.messages?.[0];
 
     if (messageObject) {
+      // Log de la estructura completa del mensaje para depuración
+      console.log("📝 Estructura completa del mensaje:", JSON.stringify(messageObject, null, 2));
+      
       const rawNumber = messageObject.from;
       const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
-      const quotedMessage = messageObject.context?.id || null;
+      
+      // Mejora en la obtención del ID del mensaje citado
+      const quotedMessage = messageObject.context?.id || messageObject.context?.message_id || null;
+      console.log("🔗 ID del mensaje citado:", quotedMessage);
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
@@ -94,18 +100,42 @@ app.post('/webhook', async (req, res) => {
         ];
 
         let citado = null;
-        if (quotedMessage) {
+        if (messageObject.context) {
+          console.log("📋 Contexto completo:", JSON.stringify(messageObject.context, null, 2));
+          
+          // Intenta obtener el mensaje citado de la base de datos
+          console.log("🔍 Buscando mensaje con ID:", quotedMessage);
           const mensajeCitado = await db.get('SELECT * FROM conversaciones WHERE id = ?', [quotedMessage]);
+          console.log("🔎 Resultado de la búsqueda:", mensajeCitado);
+          
+          // Si existe en la base de datos, úsalo
           if (mensajeCitado) {
             const quien = mensajeCitado.rol === 'user' ? 'el cliente' : 'Dinurba';
             citado = {
               role: 'system',
-              content: `El cliente está citando un mensaje anterior de ${quien}: "${mensajeCitado.contenido}". El cliente ahora escribió: "${messageText}". Responde interpretando que el nuevo mensaje se refiere directamente al mensaje citado, especialmente si el cliente pregunta sobre su contenido o hace un comentario relacionado.`
+              content: `IMPORTANTE: El cliente acaba de citar un mensaje anterior que decía: "${mensajeCitado.contenido}". 
+              Luego escribió: "${messageText}". 
+              Este nuevo mensaje hace referencia directa al mensaje citado.
+              Responde interpretando la relación entre ambos mensajes.`
             };
-          } else {
+          } 
+          // Si no está en la base de datos pero la API proporciona el contenido
+          else if (messageObject.context.quoted_message) {
             citado = {
               role: 'system',
-              content: `El cliente está citando un mensaje anterior, pero no se encontró en el historial. El cliente ahora escribió: "${messageText}". Responde basándote únicamente en el nuevo mensaje y el contexto general de la conversación.`
+              content: `IMPORTANTE: El cliente acaba de citar un mensaje que decía: "${messageObject.context.quoted_message}". 
+              Luego escribió: "${messageText}". 
+              Responde interpretando la relación entre ambos mensajes.`
+            };
+          }
+          // Si no hay forma de obtener el contenido citado
+          else {
+            citado = {
+              role: 'system',
+              content: `El cliente está respondiendo a un mensaje anterior, pero no tenemos acceso a su contenido. 
+              El cliente escribió: "${messageText}". 
+              Responde lo mejor posible basándote en el contexto general de la conversación, sin mencionar 
+              que no puedes ver el mensaje citado. Simplemente responde de la manera más útil posible.`
             };
           }
         }
