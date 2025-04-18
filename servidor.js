@@ -49,6 +49,8 @@ app.post('/webhook', async (req, res) => {
       const wa_id = messageObject.id;
       const quotedId = messageObject.context?.id || null;
 
+      console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
+
       try {
         const db = await openDB();
 
@@ -56,9 +58,6 @@ app.post('/webhook', async (req, res) => {
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
           [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
-
-        // Retraso opcional para asegurar que la base de datos esté actualizada
-        await new Promise(r => setTimeout(r, 200));
 
         const userMessages = await db.all(
           `SELECT * FROM conversaciones 
@@ -122,6 +121,7 @@ app.post('/webhook', async (req, res) => {
 
         const respuesta = respuestaIA.data.choices[0].message.content;
 
+        // Enviar el mensaje a WhatsApp primero para obtener el message_id
         const whatsappResponse = await axios.post(
           `https://graph.facebook.com/v18.0/${value.metadata.phone_number_id}/messages`,
           {
@@ -139,8 +139,10 @@ app.post('/webhook', async (req, res) => {
           }
         );
 
+        // Extraer el message_id de la respuesta de WhatsApp
         const respuestaWaId = whatsappResponse.data.messages?.[0]?.id || null;
 
+        // Guardar la respuesta en la base de datos con el wa_id
         await db.run(
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
           [respuestaWaId, phoneNumber, 'dinurba', respuesta, Date.now() / 1000]
