@@ -78,35 +78,12 @@ app.post('/webhook', async (req, res) => {
           [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
 
-        // Enviar datos básicos por WhatsApp
         let info = `🧾 wa_id recibido:\n${wa_id}`;
         if (quotedId) {
           info += `\n📎 quotedId (context.id) recibido:\n${quotedId}`;
           info += `\n🔍 Buscando mensaje con wa_id =\n${quotedId}`;
         }
         await enviarMensajeWhatsApp(phoneNumber, info, phone_id);
-
-        // Obtener historial
-        const seisMeses = 60 * 60 * 24 * 30 * 6;
-        const desde = Date.now() / 1000 - seisMeses;
-
-        const userMessages = await db.all(
-          `SELECT * FROM conversaciones 
-           WHERE numero = ? AND rol = 'user' AND timestamp >= ?
-           ORDER BY timestamp DESC LIMIT 30`,
-          [phoneNumber, desde]
-        );
-
-        const primerTimestamp = userMessages.length > 0
-          ? userMessages[userMessages.length - 1].timestamp
-          : Date.now() / 1000;
-
-        const allMessages = await db.all(
-          `SELECT * FROM conversaciones
-           WHERE numero = ? AND timestamp >= ?
-           ORDER BY timestamp ASC`,
-          [phoneNumber, primerTimestamp]
-        );
 
         // Cargar conocimiento
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
@@ -115,7 +92,7 @@ app.post('/webhook', async (req, res) => {
           content: instr
         }));
 
-        // Si hay cita, generar bloque y guardarlo en BD
+        // Si hay cita, guardar bloque system generado
         if (quotedId) {
           let citadoDB = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
 
@@ -126,7 +103,6 @@ app.post('/webhook', async (req, res) => {
 
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
-
             await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citadoDB.contenido}"`, phone_id);
 
             let bloqueCita = "";
@@ -137,7 +113,6 @@ app.post('/webhook', async (req, res) => {
               bloqueCita = `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`;
             }
 
-            // Guardar bloque system como mensaje con rol "system"
             await db.run(
               'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
               [`system-${wa_id}`, phoneNumber, 'system', bloqueCita, timestamp]
@@ -147,8 +122,22 @@ app.post('/webhook', async (req, res) => {
           }
         }
 
-        // Construir contexto final para la IA
-        let contexto = [...sistema];
+        // Calcular timestamp correcto desde el mensaje #30 más antiguo del cliente
+        const mensajeBase = await db.get(
+          `SELECT timestamp FROM conversaciones 
+           WHERE numero = ? AND rol = 'user' AND timestamp >= ? 
+           ORDER BY timestamp ASC LIMIT 30 OFFSET 29`,
+          [phoneNumber, Date.now() / 1000 - 60 * 60 * 24 * 30 * 6]
+        );
+
+        const desdeTimestamp = mensajeBase ? mensajeBase.timestamp : Date.now() / 1000;
+
+        const allMessages = await db.all(
+          `SELECT * FROM conversaciones
+           WHERE numero = ? AND timestamp >= ?
+           ORDER BY timestamp ASC`,
+          [phoneNumber, desdeTimestamp]
+        );
 
         const historialPlano = allMessages.map(msg => ({
           role: msg.rol === 'user' ? 'user' :
@@ -157,11 +146,11 @@ app.post('/webhook', async (req, res) => {
           content: msg.contenido
         }));
 
-        contexto.push(...historialPlano);
+        const contexto = [...sistema, ...historialPlano];
 
         await enviarMensajeWhatsApp(phoneNumber, `🧠 Contexto enviado a la IA:\n\`\`\`\n${JSON.stringify(contexto, null, 2)}\n\`\`\``, phone_id);
 
-        // Enviar a OpenAI
+        // Enviar a la IA
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
