@@ -78,6 +78,15 @@ app.post('/webhook', async (req, res) => {
           [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
 
+        // 🧾 Enviar wa_id y quotedId si existe
+        let infoMensaje = `🧾 wa_id recibido:\n${wa_id}`;
+        if (quotedId) {
+          infoMensaje += `\n📎 quotedId (context.id) recibido:\n${quotedId}`;
+          infoMensaje += `\n🔍 Buscando mensaje con wa_id =\n${quotedId}`;
+        }
+        await enviarMensajeWhatsApp(phoneNumber, infoMensaje, phone_id);
+
+        // ⏳ Obtener historial del cliente (últimos 30 mensajes)
         const seisMeses = 60 * 60 * 24 * 30 * 6;
         const desde = Date.now() / 1000 - seisMeses;
 
@@ -104,6 +113,7 @@ app.post('/webhook', async (req, res) => {
           content: m.contenido
         }));
 
+        // 📚 Cargar conocimiento base
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
         const sistema = conocimiento.map(instr => ({
           role: "system",
@@ -123,10 +133,10 @@ app.post('/webhook', async (req, res) => {
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
 
-            // 🔔 Enviar mensaje citado
+            // ✅ Enviar mensaje citado
             await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citadoDB.contenido}"`, phone_id);
 
-            // 🔔 Crear bloque system e informar por WhatsApp
+            // 🤖 Crear bloque system
             if (messageText.toLowerCase().includes("literalmente")) {
               citado = {
                 role: 'system',
@@ -139,15 +149,19 @@ app.post('/webhook', async (req, res) => {
               };
             }
 
-            // 🔔 Enviar bloque system por WhatsApp
+            // Enviar bloque system generado
             await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system para IA:\n${citado.content}`, phone_id);
           }
         }
 
+        // 📤 Enviar contexto completo por WhatsApp para revisión
         let contexto = [...sistema];
         if (citado) contexto.push(citado);
         contexto.push(...historial);
 
+        await enviarMensajeWhatsApp(phoneNumber, `🧠 Contexto enviado a la IA:\n\`\`\`\n${JSON.stringify(contexto, null, 2)}\n\`\`\``, phone_id);
+
+        // 🧠 Enviar a OpenAI para responder
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
@@ -164,6 +178,7 @@ app.post('/webhook', async (req, res) => {
 
         const respuestaGenerada = respuestaIA.data.choices[0].message.content;
 
+        // 📬 Enviar respuesta generada al cliente
         const respuestaWa = await axios.post(
           `https://graph.facebook.com/v18.0/${phone_id}/messages`,
           {
