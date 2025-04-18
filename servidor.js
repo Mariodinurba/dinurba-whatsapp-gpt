@@ -28,7 +28,8 @@ const openDB = async () => {
         numero TEXT,
         rol TEXT,
         contenido TEXT,
-        timestamp INTEGER
+        timestamp INTEGER,
+        quoted_wa_id TEXT
       )
     `);
   }
@@ -77,14 +78,15 @@ app.post('/webhook', async (req, res) => {
       try {
         const db = await openDB();
 
+        // Guardar el mensaje del usuario
         await db.run(
-          'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
-          [wa_id, phoneNumber, 'user', messageText, timestamp]
+          'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp, quoted_wa_id) VALUES (?, ?, ?, ?, ?, ?)',
+          [wa_id, phoneNumber, 'user', messageText, timestamp, quotedId]
         );
 
+        // Obtener historial de los últimos 6 meses
         const seisMeses = 60 * 60 * 24 * 30 * 6;
         const desde = Date.now() / 1000 - seisMeses;
-
         const allMessages = await db.all(
           `SELECT * FROM conversaciones
            WHERE numero = ? AND timestamp >= ?
@@ -92,29 +94,33 @@ app.post('/webhook', async (req, res) => {
           [phoneNumber, desde]
         );
 
+        // Cargar instrucciones del sistema
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
         const sistema = conocimiento.map(instr => ({ role: "system", content: instr }));
-
         const contexto = [...sistema];
-        const wa_idsCitados = [];
 
-        for (let i = 0; i < allMessages.length; i++) {
-          const m = allMessages[i];
-          if (m.wa_id === quotedId) {
-            wa_idsCitados.push(m.wa_id);
-          }
-        }
-
+        // Construir el contexto
         for (let i = 0; i < allMessages.length; i++) {
           const m = allMessages[i];
 
-          if (m.rol === 'user' && wa_idsCitados.includes(m.wa_id)) {
+          // Omitir mensajes citados para evitar duplicación
+          if (m.quoted_wa_id && allMessages.some(msg => msg.quoted_wa_id === m.wa_id && msg.rol === 'system_cita')) {
             continue;
           }
 
-          contexto.push({ role: m.rol === 'user' ? 'user' : 'assistant', content: m.contenido });
+          // Agregar mensajes de usuario o asistente
+          if (m.rol === 'user' || m.rol === 'dinurba') {
+            contexto.push({
+              role: m.rol === 'user' ? 'user' : 'assistant',
+              content: m.contenido
+            });
+          } else if (m.rol === 'system_cita') {
+            // Agregar bloques system_cita almacenados
+            contexto.push(JSON.parse(m.contenido));
+          }
 
-          if (m.wa_id === quotedId) {
+          // Generar y guardar bloque system para la cita actual
+          if (quotedId && m.wa_id === wa_id) {
             const citado = allMessages.find(msg => msg.wa_id === quotedId);
             if (citado) {
               const quien = citado.rol === 'user' ? 'el cliente' : 'Dinurba';
@@ -123,21 +129,37 @@ app.post('/webhook', async (req, res) => {
                 content: `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
               };
               contexto.push(bloque);
+
+              // Guardar el bloque en la base de datos
+              await db.run(
+                'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp, quoted_wa_id) VALUES (?, ?, ?, ?, ?, ?)',
+                [`system_${wa_id}`, phoneNumber, 'system_cita', JSON.stringify(bloque), timestamp + 0.1, quotedId]
+              );
+
+              // Enviar bloque al cliente para transparencia
               await enviarMensajeWhatsApp(
                 phoneNumber,
                 `Bloque generado para IA:\n${JSON.stringify(bloque, null, 2)}`,
+                phone_id
+              );
+            } else {
+              await enviarMensajeWhatsApp(
+                phoneNumber,
+                `⚠️ No se encontró el mensaje citado.`,
                 phone_id
               );
             }
           }
         }
 
+        // Enviar contexto final para depuración
         await enviarMensajeWhatsApp(
           phoneNumber,
           `📦 Contexto final enviado a la IA:\n${JSON.stringify(contexto, null, 2)}`,
           phone_id
         );
 
+        // Llamada a la API de OpenAI
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
@@ -154,6 +176,7 @@ app.post('/webhook', async (req, res) => {
 
         const respuestaGenerada = respuestaIA.data.choices[0].message.content;
 
+        // Enviar respuesta al cliente
         const respuestaWa = await axios.post(
           `https://graph.facebook.com/v18.0/${phone_id}/messages`,
           {
@@ -171,9 +194,10 @@ app.post('/webhook', async (req, res) => {
 
         const respuestaId = respuestaWa.data.messages?.[0]?.id || null;
 
+        // Guardar respuesta del bot
         await db.run(
-          'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
-          [respuestaId, phoneNumber, 'dinurba', "🤖 " + respuestaGenerada, Date.now() / 1000]
+          'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp, quoted_wa_id) VALUES (?, ?, ?, ?, ?, ?)',
+          [respuestaId, phoneNumber, 'dinurba', "🤖 " + respuestaGenerada, Date.now() / 1000, null]
         );
 
       } catch (error) {
