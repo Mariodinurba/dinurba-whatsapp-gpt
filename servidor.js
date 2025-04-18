@@ -10,10 +10,9 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const ASSISTANT_ID = 'asst_WXEwYWFnqSP60RLicaGonUIi';
+const ASSISTANT_ID = 'asst_lXExYWFnqSP6ORLicaGonUTi';
 
 // ==================== Base de datos ====================
-
 let db;
 const openDB = async () => {
   if (!db) {
@@ -37,7 +36,6 @@ const openDB = async () => {
 };
 
 // ==================== WhatsApp ====================
-
 const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
   await axios.post(
     `https://graph.facebook.com/v18.0/${phone_id}/messages`,
@@ -56,10 +54,8 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
 };
 
 // ==================== Webhook POST ====================
-
 app.post('/webhook', async (req, res) => {
   const body = req.body;
-
   if (!body.object) return res.sendStatus(404);
 
   const entry = body.entry?.[0];
@@ -75,6 +71,8 @@ app.post('/webhook', async (req, res) => {
   const messageText = messageObject.text?.body;
   const timestamp = parseInt(messageObject.timestamp);
   const wa_id = messageObject.id;
+  const quotedId = messageObject.context?.id || null;
+  const tipo = messageObject.type || 'desconocido';
 
   if (!messageText) return res.sendStatus(200);
 
@@ -87,30 +85,86 @@ app.post('/webhook', async (req, res) => {
       [wa_id, phoneNumber, 'user', messageText, timestamp]
     );
 
-    // ==================== Assistant API ====================
+    // === Mensaje con wa_id y tipo de contenido ===
+    let info = `🧾 wa_id recibido:\n${wa_id}\n📦 Tipo de contenido: ${tipo}`;
+    if (quotedId) {
+      info += `\n📎 quotedId recibido:\n${quotedId}\n🔍 Buscando mensaje con wa_id = ${quotedId}`;
+    }
+    await enviarMensajeWhatsApp(phoneNumber, info, phone_id);
 
-    // 1. Crear un thread
-    const thread = await axios.post(
-      'https://api.openai.com/v1/threads',
-      {},
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-          'OpenAI-Beta': 'assistants=v2'
-        }
+    // === Procesar mensaje citado ===
+    if (quotedId) {
+      let citado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
+
+      if (!citado) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        citado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
       }
+
+      if (citado) {
+        const quien = citado.rol === 'user' ? 'el cliente' : 'Dinurba';
+        await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citado.contenido}"`, phone_id);
+
+        const bloque = `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Luego escribió: "${messageText}". Interpreta la relación entre ambos.`;
+
+        await db.run(
+          'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
+          [`system-${wa_id}`, phoneNumber, 'system', bloque, timestamp]
+        );
+
+        await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloque}`, phone_id);
+
+        // Marcar mensaje actual como omitido
+        await db.run('UPDATE conversaciones SET rol = ? WHERE wa_id = ?', ['user_omitido', wa_id]);
+      }
+    }
+
+    // === Obtener historial del cliente ===
+    const seisMeses = 60 * 60 * 24 * 30 * 6;
+    const desde = Date.now() / 1000 - seisMeses;
+
+    const mensajesCliente = await db.all(
+      `SELECT * FROM conversaciones 
+       WHERE numero = ? AND rol = 'user' AND timestamp >= ?
+       ORDER BY timestamp DESC LIMIT 30`,
+      [phoneNumber, desde]
     );
+
+    const primerTimestamp = mensajesCliente.length > 0
+      ? mensajesCliente[mensajesCliente.length - 1].timestamp
+      : Date.now() / 1000;
+
+    const allMessages = await db.all(
+      `SELECT * FROM conversaciones
+       WHERE numero = ? AND timestamp >= ? AND rol != 'user_omitido'
+       ORDER BY timestamp ASC`,
+      [phoneNumber, primerTimestamp]
+    );
+
+    const contexto = allMessages.map(msg => ({
+      role: msg.rol === 'user' ? 'user' :
+            msg.rol === 'assistant' ? 'assistant' :
+            msg.rol === 'system' ? 'system' :
+            msg.rol === 'dinurba' ? 'assistant' : 'assistant',
+      content: msg.contenido
+    }));
+
+    await enviarMensajeWhatsApp(phoneNumber, `🧠 Contexto enviado a la IA:\n\`\`\`\n${JSON.stringify(contexto, null, 2)}\n\`\`\``, phone_id);
+
+    // === Crear thread y enviar mensaje al Assistant ===
+    const thread = await axios.post('https://api.openai.com/v1/threads', {}, {
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+        'OpenAI-Beta': 'assistants=v2'
+      }
+    });
 
     const thread_id = thread.data.id;
 
-    // 2. Agregar el mensaje del usuario al thread
     await axios.post(
       `https://api.openai.com/v1/threads/${thread_id}/messages`,
-      {
-        role: "user",
-        content: messageText
-      },
+      { role: "user", content: messageText },
       {
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -120,12 +174,9 @@ app.post('/webhook', async (req, res) => {
       }
     );
 
-    // 3. Ejecutar el assistant
     const run = await axios.post(
       `https://api.openai.com/v1/threads/${thread_id}/runs`,
-      {
-        assistant_id: ASSISTANT_ID
-      },
+      { assistant_id: ASSISTANT_ID },
       {
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -135,14 +186,12 @@ app.post('/webhook', async (req, res) => {
       }
     );
 
-    const run_id = run.data.id;
-
-    // 4. Esperar a que el run finalice (polling)
+    // === Esperar respuesta del Assistant ===
     let status = "queued";
     while (status !== "completed" && status !== "failed") {
       await new Promise(resolve => setTimeout(resolve, 1000));
       const check = await axios.get(
-        `https://api.openai.com/v1/threads/${thread_id}/runs/${run_id}`,
+        `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}`,
         {
           headers: {
             Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -153,7 +202,6 @@ app.post('/webhook', async (req, res) => {
       status = check.data.status;
     }
 
-    // 5. Obtener la respuesta final
     if (status === "completed") {
       const messages = await axios.get(
         `https://api.openai.com/v1/threads/${thread_id}/messages`,
@@ -172,7 +220,7 @@ app.post('/webhook', async (req, res) => {
 
       await db.run(
         'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
-        [run_id, phoneNumber, 'dinurba', texto, Date.now() / 1000]
+        [run.data.id, phoneNumber, 'dinurba', texto, Date.now() / 1000]
       );
     } else {
       await enviarMensajeWhatsApp(phoneNumber, "❌ El Assistant falló al procesar tu mensaje.", phone_id);
@@ -188,7 +236,6 @@ app.post('/webhook', async (req, res) => {
 });
 
 // ==================== Webhook GET ====================
-
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -203,7 +250,6 @@ app.get('/webhook', (req, res) => {
 });
 
 // ==================== Iniciar servidor ====================
-
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
 });
