@@ -22,15 +22,15 @@ const openDB = async () => {
     });
 
     await db.exec(`
-  CREATE TABLE IF NOT EXISTS conversaciones (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    wa_id TEXT,
-    numero TEXT,
-    rol TEXT,
-    contenido TEXT,
-    timestamp INTEGER
-  )
-`);
+      CREATE TABLE IF NOT EXISTS conversaciones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        wa_id TEXT,
+        numero TEXT,
+        rol TEXT,
+        contenido TEXT,
+        timestamp INTEGER
+      )
+    `);
   }
 
   return db;
@@ -38,7 +38,7 @@ const openDB = async () => {
 
 const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
   await axios.post(
-    https://graph.facebook.com/v18.0/${phone_id}/messages,
+    `https://graph.facebook.com/v18.0/${phone_id}/messages`,
     {
       messaging_product: "whatsapp",
       to: numero,
@@ -46,7 +46,7 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
     },
     {
       headers: {
-        Authorization: Bearer ${WHATSAPP_TOKEN},
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
         'Content-Type': 'application/json'
       }
     }
@@ -80,12 +80,13 @@ app.post('/webhook', async (req, res) => {
           [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
 
-        let quotedInfo = 📝 wa_id recibido: ${wa_id};
+        let quotedInfo = `📝 wa_id recibido: ${wa_id}`;
         if (quotedId) {
-          quotedInfo += \n📎 quotedId (context.id) recibido: ${quotedId};
-          quotedInfo += \n🔍 Buscando mensaje con wa_id = ${quotedId};
+          quotedInfo += `\n📎 quotedId (context.id): ${quotedId}`;
+          quotedInfo += `\n🔍 Buscando mensaje citado con wa_id: ${quotedId}`;
         }
 
+        // Mensaje informativo inicial
         if (quotedInfo) {
           await enviarMensajeWhatsApp(phoneNumber, quotedInfo, phone_id);
         }
@@ -95,9 +96,9 @@ app.post('/webhook', async (req, res) => {
         const desde = Date.now() / 1000 - seisMeses;
 
         const userMessages = await db.all(
-          SELECT * FROM conversaciones 
+          `SELECT * FROM conversaciones 
            WHERE numero = ? AND rol = 'user' AND timestamp >= ?
-           ORDER BY timestamp DESC LIMIT 30,
+           ORDER BY timestamp DESC LIMIT 30`,
           [phoneNumber, desde]
         );
 
@@ -106,9 +107,9 @@ app.post('/webhook', async (req, res) => {
           : Date.now() / 1000;
 
         const allMessages = await db.all(
-          SELECT * FROM conversaciones
+          `SELECT * FROM conversaciones
            WHERE numero = ? AND timestamp >= ?
-           ORDER BY timestamp ASC,
+           ORDER BY timestamp ASC`,
           [phoneNumber, primerTimestamp]
         );
 
@@ -135,17 +136,21 @@ app.post('/webhook', async (req, res) => {
 
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
+            await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n🧾 "${citadoDB.contenido}"`, phone_id);
+
             if (messageText.toLowerCase().includes("literalmente")) {
               citado = {
                 role: 'system',
-                content: El cliente pidió conocer el contenido literal de un mensaje citado. Este fue el mensaje citado: "${citadoDB.contenido}". No agregues nada más.
+                content: `El cliente pidió conocer el contenido literal de un mensaje citado. Este fue el mensaje citado: "${citadoDB.contenido}". No agregues nada más.`
               };
             } else {
               citado = {
                 role: 'system',
-                content: El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.
+                content: `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
               };
             }
+          } else {
+            await enviarMensajeWhatsApp(phoneNumber, "⚠️ Mensaje citado no encontrado en la base de datos.", phone_id);
           }
         }
 
@@ -161,7 +166,7 @@ app.post('/webhook', async (req, res) => {
           },
           {
             headers: {
-              Authorization: Bearer ${OPENAI_API_KEY},
+              Authorization: `Bearer ${OPENAI_API_KEY}`,
               'Content-Type': 'application/json'
             }
           }
@@ -170,7 +175,7 @@ app.post('/webhook', async (req, res) => {
         const respuestaGenerada = respuestaIA.data.choices[0].message.content;
 
         const respuestaWa = await axios.post(
-          https://graph.facebook.com/v18.0/${phone_id}/messages,
+          `https://graph.facebook.com/v18.0/${phone_id}/messages`,
           {
             messaging_product: "whatsapp",
             to: phoneNumber,
@@ -178,7 +183,7 @@ app.post('/webhook', async (req, res) => {
           },
           {
             headers: {
-              Authorization: Bearer ${WHATSAPP_TOKEN},
+              Authorization: `Bearer ${WHATSAPP_TOKEN}`,
               'Content-Type': 'application/json'
             }
           }
@@ -194,7 +199,7 @@ app.post('/webhook', async (req, res) => {
       } catch (error) {
         const errorMsg = error.response?.data?.error?.message || error.message;
         console.error("❌ Error:", errorMsg);
-        await enviarMensajeWhatsApp(phoneNumber, ❌ Error: ${errorMsg}, value?.metadata?.phone_number_id);
+        await enviarMensajeWhatsApp(phoneNumber, `❌ Error: ${errorMsg}`, value?.metadata?.phone_number_id);
       }
     }
 
@@ -218,5 +223,5 @@ app.get('/webhook', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(🚀 Servidor corriendo en el puerto ${PORT});
+  console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
 });
