@@ -72,11 +72,9 @@ app.post('/webhook', async (req, res) => {
 
       try {
         const db = await openDB();
-
-        await db.run(
-          'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
-          [wa_id, phoneNumber, 'user', messageText, timestamp]
-        );
+        
+        // Variable para controlar si debemos agregar el mensaje del usuario al contexto
+        let omitCurrentUserMessage = false;
 
         // Enviar datos básicos por WhatsApp
         let info = `🧾 wa_id recibido:\n${wa_id}`;
@@ -130,14 +128,33 @@ app.post('/webhook', async (req, res) => {
             );
 
             await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloqueCita}`, phone_id);
+            
+            // Como creamos un bloque system, omitiremos el mensaje del usuario 
+            // en el contexto enviado a la IA
+            omitCurrentUserMessage = true;
           }
         }
 
-        // Obtenemos TODOS los mensajes (user, assistant y system) en orden cronológico
-        // Esto nos permite mantener el contexto cronológico completo
+        // Ahora guardamos el mensaje del usuario en la base de datos
+        // Lo hacemos después del bloque de cita para tener el valor correcto de omitCurrentUserMessage
+        if (!omitCurrentUserMessage) {
+          await db.run(
+            'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
+            [wa_id, phoneNumber, 'user', messageText, timestamp]
+          );
+        } else {
+          // Guardamos el mensaje con un rol especial para mantenerlo en la BD pero excluirlo del contexto
+          await db.run(
+            'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
+            [wa_id, phoneNumber, 'user_omitido', messageText, timestamp]
+          );
+        }
+
+        // Obtenemos todos los mensajes relevantes para el contexto
+        // Excluimos los mensajes marcados como 'user_omitido'
         const allMessages = await db.all(
           `SELECT * FROM conversaciones
-           WHERE numero = ? AND timestamp >= ?
+           WHERE numero = ? AND timestamp >= ? AND rol != 'user_omitido'
            ORDER BY timestamp ASC`,
           [phoneNumber, primerTimestamp]
         );
