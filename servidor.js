@@ -209,7 +209,7 @@ app.post('/webhook', async (req, res) => {
 
         await db.run(
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
-          [respuestaId, phoneNumber, 'dinurba', "🤖 " + respuestaGenerada, Date.now() / 1000]
+          [respuestaId, phoneNumber, 'dinurba', respuestaGenerada, Date.now() / 1000]
         );
 
       } catch (error) {
