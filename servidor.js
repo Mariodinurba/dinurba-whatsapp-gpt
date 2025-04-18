@@ -75,6 +75,15 @@ app.post('/webhook', async (req, res) => {
       try {
         const db = await openDB();
 
+        // 🧾 Mensaje de wa_id recibido
+        let info = `🧾 wa_id recibido:\n${wa_id}`;
+        if (quotedId) {
+          info += `\n📎 quotedId (context.id) recibido:\n${quotedId}`;
+          info += `\n🔍 Buscando mensaje con wa_id =\n${quotedId}`;
+        }
+        await enviarMensajeWhatsApp(phoneNumber, info, phone_id);
+
+        // Guardar el mensaje original del cliente
         await db.run(
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
           [wa_id, phoneNumber, 'user', messageText, timestamp]
@@ -103,6 +112,8 @@ app.post('/webhook', async (req, res) => {
           }
 
           if (citadoDB) {
+            await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citadoDB.contenido}"`, phone_id);
+
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
 
             const bloqueCita = `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Interpreta la relación entre ambos. Si el cliente solo quiere saber qué decía exactamente el mensaje citado, responde solo el texto citado.`;
@@ -111,6 +122,8 @@ app.post('/webhook', async (req, res) => {
               'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
               [`system-${wa_id}`, phoneNumber, 'system', bloqueCita, timestamp]
             );
+
+            await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloqueCita}`, phone_id);
 
             await db.run(
               'UPDATE conversaciones SET rol = ? WHERE wa_id = ?',
@@ -143,6 +156,8 @@ app.post('/webhook', async (req, res) => {
         }));
 
         contexto.push(...historialPlano);
+
+        await enviarMensajeWhatsApp(phoneNumber, `🧠 Contexto enviado a la IA:\n\`\`\`\n${JSON.stringify(contexto, null, 2)}\n\`\`\``, phone_id);
 
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
