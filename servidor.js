@@ -69,13 +69,13 @@ app.post('/webhook', async (req, res) => {
       const timestamp = parseInt(messageObject.timestamp);
       const wa_id = messageObject.id;
       const quotedId = messageObject.context?.id || null;
+      const tipo = messageObject.type || 'desconocido';
 
       if (!messageText) return res.sendStatus(200);
 
       try {
         const db = await openDB();
 
-        // 🧾 Mensaje de wa_id recibido
         let info = `🧾 wa_id recibido:\n${wa_id}`;
         if (quotedId) {
           info += `\n📎 quotedId (context.id) recibido:\n${quotedId}`;
@@ -83,7 +83,6 @@ app.post('/webhook', async (req, res) => {
         }
         await enviarMensajeWhatsApp(phoneNumber, info, phone_id);
 
-        // Guardar el mensaje original del cliente
         await db.run(
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
           [wa_id, phoneNumber, 'user', messageText, timestamp]
@@ -156,6 +155,9 @@ app.post('/webhook', async (req, res) => {
         }));
 
         contexto.push(...historialPlano);
+
+        // 📦 Enviar tipo de contenido por WhatsApp
+        await enviarMensajeWhatsApp(phoneNumber, `📦 Tipo de contenido recibido: ${tipo}`, phone_id);
 
         await enviarMensajeWhatsApp(phoneNumber, `🧠 Contexto enviado a la IA:\n\`\`\`\n${JSON.stringify(contexto, null, 2)}\n\`\`\``, phone_id);
 
