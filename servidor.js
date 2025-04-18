@@ -25,7 +25,8 @@ const openDB = async () => {
       numero TEXT,
       rol TEXT,
       contenido TEXT,
-      timestamp INTEGER
+      timestamp INTEGER,
+      message_id TEXT
     )
   `);
 
@@ -46,7 +47,8 @@ app.post('/webhook', async (req, res) => {
       const phoneNumber = rawNumber.replace(/^521/, '52');
       const messageText = messageObject.text?.body;
       const timestamp = parseInt(messageObject.timestamp);
-      const quotedId = messageObject.context?.id || null;
+      const quotedId = messageObject.context?.id || messageObject.context?.message_id || null;
+      const messageId = messageObject.id;
 
       console.log("📩 Mensaje recibido de " + phoneNumber + ": " + messageText);
 
@@ -54,8 +56,8 @@ app.post('/webhook', async (req, res) => {
         const db = await openDB();
 
         await db.run(
-          'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-          [phoneNumber, 'user', messageText, timestamp]
+          'INSERT INTO conversaciones (numero, rol, contenido, timestamp, message_id) VALUES (?, ?, ?, ?, ?)',
+          [phoneNumber, 'user', messageText, timestamp, messageId]
         );
 
         const userMessages = await db.all(
@@ -95,19 +97,13 @@ app.post('/webhook', async (req, res) => {
 
         let citado = null;
 
-        // --- CORRECCIÓN PRINCIPAL AQUÍ ---
-        if (messageObject.context?.quoted_message?.text?.body) {
-          const quotedText = messageObject.context.quoted_message.text.body;
-          citado = {
-            role: 'system',
-            content: `El cliente está citando este mensaje: "${quotedText}". Su pregunta actual es: "${messageText}". Responde interpretando específicamente el mensaje citado.`
-          };
-        } else if (quotedId) {
-          const citadoDB = await db.get('SELECT * FROM conversaciones WHERE id = ?', [quotedId]);
+        if (quotedId) {
+          const citadoDB = await db.get('SELECT * FROM conversaciones WHERE message_id = ?', [quotedId]);
           if (citadoDB) {
+            const autor = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
             citado = {
               role: 'system',
-              content: `El cliente está citando un mensaje anterior: "${citadoDB.contenido}". Su pregunta actual es: "${messageText}". Responde interpretando específicamente el mensaje citado.`
+              content: `El cliente citó el siguiente mensaje de ${autor}: "${citadoDB.contenido}". Su mensaje actual es: "${messageText}". Responde directamente a la pregunta o mensaje actual basándote en el contenido del mensaje citado.`
             };
           }
         }
@@ -130,9 +126,11 @@ app.post('/webhook', async (req, res) => {
 
         const respuesta = respuestaIA.data.choices[0].message.content;
 
+        const respuestaMessageId = `response_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+
         await db.run(
-          'INSERT INTO conversaciones (numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?)',
-          [phoneNumber, 'dinurba', respuesta, Date.now() / 1000]
+          'INSERT INTO conversaciones (numero, rol, contenido, timestamp, message_id) VALUES (?, ?, ?, ?, ?)',
+          [phoneNumber, 'dinurba', respuesta, Date.now() / 1000, respuestaMessageId]
         );
 
         await axios.post(
