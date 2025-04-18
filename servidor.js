@@ -73,8 +73,12 @@ app.post('/webhook', async (req, res) => {
       try {
         const db = await openDB();
         
-        // Variable para controlar si debemos agregar el mensaje del usuario al contexto
-        let omitCurrentUserMessage = false;
+        // IMPORTANTE: Siempre guardamos el mensaje del usuario primero como 'user'
+        // Esto garantiza que aparezca en el contexto desde el primer mensaje
+        await db.run(
+          'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
+          [wa_id, phoneNumber, 'user', messageText, timestamp]
+        );
 
         // Enviar datos básicos por WhatsApp
         let info = `🧾 wa_id recibido:\n${wa_id}`;
@@ -129,25 +133,12 @@ app.post('/webhook', async (req, res) => {
 
             await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloqueCita}`, phone_id);
             
-            // Como creamos un bloque system, omitiremos el mensaje del usuario 
-            // en el contexto enviado a la IA
-            omitCurrentUserMessage = true;
+            // Cambiamos el rol del mensaje que acabamos de guardar para evitar duplicidad
+            await db.run(
+              'UPDATE conversaciones SET rol = ? WHERE wa_id = ?',
+              ['user_omitido', wa_id]
+            );
           }
-        }
-
-        // Ahora guardamos el mensaje del usuario en la base de datos
-        // Lo hacemos después del bloque de cita para tener el valor correcto de omitCurrentUserMessage
-        if (!omitCurrentUserMessage) {
-          await db.run(
-            'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
-            [wa_id, phoneNumber, 'user', messageText, timestamp]
-          );
-        } else {
-          // Guardamos el mensaje con un rol especial para mantenerlo en la BD pero excluirlo del contexto
-          await db.run(
-            'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
-            [wa_id, phoneNumber, 'user_omitido', messageText, timestamp]
-          );
         }
 
         // Obtenemos todos los mensajes relevantes para el contexto
@@ -218,7 +209,7 @@ app.post('/webhook', async (req, res) => {
 
         await db.run(
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
-          [respuestaId, phoneNumber, 'dinurba', respuestaGenerada, Date.now() / 1000]
+          [respuestaId, phoneNumber, 'dinurba', "🤖 " + respuestaGenerada, Date.now() / 1000]
         );
 
       } catch (error) {
