@@ -32,6 +32,7 @@ const openDB = async () => {
       )
     `);
   }
+
   return db;
 };
 
@@ -78,15 +79,14 @@ app.post('/webhook', async (req, res) => {
           [wa_id, phoneNumber, 'user', messageText, timestamp]
         );
 
-        // Enviar datos básicos por WhatsApp
-        let info = `🧾 wa_id recibido:\n${wa_id}`;
+        let quotedInfo = `📝 wa_id recibido: ${wa_id}`;
         if (quotedId) {
-          info += `\n📎 quotedId (context.id) recibido:\n${quotedId}`;
-          info += `\n🔍 Buscando mensaje con wa_id =\n${quotedId}`;
+          quotedInfo += `\n📎 quotedId (context.id) recibido: ${quotedId}`;
+          quotedInfo += `\n🔍 Buscando mensaje con wa_id = ${quotedId}`;
         }
-        await enviarMensajeWhatsApp(phoneNumber, info, phone_id);
 
-        // Obtener historial
+        await enviarMensajeWhatsApp(phoneNumber, quotedInfo, phone_id);
+
         const seisMeses = 60 * 60 * 24 * 30 * 6;
         const desde = Date.now() / 1000 - seisMeses;
 
@@ -101,7 +101,27 @@ app.post('/webhook', async (req, res) => {
           ? userMessages[userMessages.length - 1].timestamp
           : Date.now() / 1000;
 
-        // Si hay cita, generar bloque y guardarlo en BD
+        const allMessages = await db.all(
+          `SELECT * FROM conversaciones
+           WHERE numero = ? AND timestamp >= ?
+           ORDER BY timestamp ASC`,
+          [phoneNumber, primerTimestamp]
+        );
+
+        const historial = allMessages.map(m => ({
+          role: m.rol === 'user' ? 'user' : 
+                m.rol === 'system' ? 'system' : 'assistant',
+          content: m.contenido
+        }));
+
+        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
+        const sistema = conocimiento.map(instr => ({
+          role: "system",
+          content: instr
+        }));
+
+        let citado = null;
+
         if (quotedId) {
           let citadoDB = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
 
@@ -113,59 +133,19 @@ app.post('/webhook', async (req, res) => {
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
 
-            await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citadoDB.contenido}"`, phone_id);
-
-            let bloqueCita = "";
-
-            if (messageText.toLowerCase().includes("literalmente")) {
-              bloqueCita = `El cliente pidió conocer el contenido literal de un mensaje citado. Este fue el mensaje citado: "${citadoDB.contenido}". No agregues nada más.`;
-            } else {
-              bloqueCita = `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`;
-            }
-
-            // Guardar bloque system como mensaje con rol "system"
-            await db.run(
-              'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
-              [`system-${wa_id}`, phoneNumber, 'system', bloqueCita, timestamp]
-            );
-
-            await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloqueCita}`, phone_id);
+            citado = {
+              role: 'system',
+              content: messageText.toLowerCase().includes("literalmente")
+                ? `El cliente pidió conocer el contenido literal de un mensaje citado. Este fue el mensaje citado: "${citadoDB.contenido}". No agregues nada más.`
+                : `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
+            };
           }
         }
 
-        // Obtenemos TODOS los mensajes (user, assistant y system) en orden cronológico
-        // Esto nos permite mantener el contexto cronológico completo
-        const allMessages = await db.all(
-          `SELECT * FROM conversaciones
-           WHERE numero = ? AND timestamp >= ?
-           ORDER BY timestamp ASC`,
-          [phoneNumber, primerTimestamp]
-        );
-
-        // Cargar conocimiento
-        const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
-        const sistema = conocimiento.map(instr => ({
-          role: "system",
-          content: instr
-        }));
-
-        // Construir contexto final para la IA
         let contexto = [...sistema];
+        if (citado) contexto.push(citado);
+        contexto.push(...historial);
 
-        // Agregamos todos los mensajes en orden cronológico
-        const historialPlano = allMessages.map(msg => ({
-          role: msg.rol === 'user' ? 'user' : 
-                msg.rol === 'assistant' ? 'assistant' : 
-                msg.rol === 'system' ? 'system' : 
-                msg.rol === 'dinurba' ? 'assistant' : 'assistant',
-          content: msg.contenido
-        }));
-
-        contexto.push(...historialPlano);
-
-        await enviarMensajeWhatsApp(phoneNumber, `🧠 Contexto enviado a la IA:\n\`\`\`\n${JSON.stringify(contexto, null, 2)}\n\`\`\``, phone_id);
-
-        // Enviar a OpenAI
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
           {
@@ -203,7 +183,6 @@ app.post('/webhook', async (req, res) => {
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
           [respuestaId, phoneNumber, 'dinurba', "🤖 " + respuestaGenerada, Date.now() / 1000]
         );
-
       } catch (error) {
         const errorMsg = error.response?.data?.error?.message || error.message;
         console.error("❌ Error:", errorMsg);
