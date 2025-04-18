@@ -21,16 +21,16 @@ const openDB = async () => {
       driver: sqlite3.Database
     });
 
-    await db.exec(
-      CREATE TABLE IF NOT EXISTS conversaciones (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        wa_id TEXT,
-        numero TEXT,
-        rol TEXT,
-        contenido TEXT,
-        timestamp INTEGER
-      )
-    );
+    await db.exec(`
+  CREATE TABLE IF NOT EXISTS conversaciones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    wa_id TEXT,
+    numero TEXT,
+    rol TEXT,
+    contenido TEXT,
+    timestamp INTEGER
+  )
+`);
   }
 
   return db;
