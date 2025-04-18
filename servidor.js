@@ -123,10 +123,10 @@ app.post('/webhook', async (req, res) => {
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
 
-            // ✅ Enviar mensaje citado al cliente
+            // 🔔 Enviar mensaje citado
             await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citadoDB.contenido}"`, phone_id);
 
-            // ✅ Crear y enviar bloque system generado
+            // 🔔 Crear bloque system e informar por WhatsApp
             if (messageText.toLowerCase().includes("literalmente")) {
               citado = {
                 role: 'system',
@@ -139,6 +139,7 @@ app.post('/webhook', async (req, res) => {
               };
             }
 
+            // 🔔 Enviar bloque system por WhatsApp
             await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system para IA:\n${citado.content}`, phone_id);
           }
         }
