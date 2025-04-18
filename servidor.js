@@ -96,35 +96,37 @@ app.post('/webhook', async (req, res) => {
         const sistema = conocimiento.map(instr => ({ role: "system", content: instr }));
 
         const contexto = [...sistema];
+        const wa_idsCitados = [];
         const bloques = [];
 
         for (let i = 0; i < allMessages.length; i++) {
           const m = allMessages[i];
 
-          if (m.rol === 'user' && m.wa_id === quotedId) {
-            mensajeCitado = m;
+          if (m.wa_id === quotedId) {
+            wa_idsCitados.push(m.wa_id);
+          }
+        }
+
+        for (let i = 0; i < allMessages.length; i++) {
+          const m = allMessages[i];
+
+          if (m.rol === 'user' && wa_idsCitados.includes(m.wa_id)) {
+            continue; // No insertar mensajes ya explicados por bloque "system"
           }
 
-          if (m.rol === 'user' && m.wa_id === wa_id && quotedId) {
+          contexto.push({ role: m.rol === 'user' ? 'user' : 'assistant', content: m.contenido });
+
+          if (m.wa_id === quotedId) {
             const citado = allMessages.find(msg => msg.wa_id === quotedId);
             if (citado) {
               const quien = citado.rol === 'user' ? 'el cliente' : 'Dinurba';
               const bloque = {
                 role: 'system',
-                content: `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Luego escribió: "${m.contenido}". Responde interpretando la relación entre ambos.`,
-                timestamp: m.timestamp
+                content: `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
               };
-              bloques.push(bloque);
-              await enviarMensajeWhatsApp(phoneNumber, `📎 Mensaje citado encontrado:\n"${citado.contenido}"`, phone_id);
+              contexto.push(bloque);
               await enviarMensajeWhatsApp(phoneNumber, `📌 Bloque generado para IA:\n${bloque.content}`, phone_id);
             }
-          } else if (!(m.rol === 'user' && m.wa_id === wa_id && quotedId)) {
-            contexto.push({ role: m.rol === 'user' ? 'user' : 'assistant', content: m.contenido });
-          }
-
-          const bloquesParaInsertar = bloques.filter(b => b.timestamp === m.timestamp);
-          for (const b of bloquesParaInsertar) {
-            contexto.push({ role: b.role, content: b.content });
           }
         }
 
