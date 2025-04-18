@@ -136,6 +136,7 @@ app.post('/webhook', async (req, res) => {
               content: `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
             };
             await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n🧾 "${citadoDB.contenido}"`, phone_id);
+            await enviarMensajeWhatsApp(phoneNumber, `🧠 Bloque system para IA:\n${citado.content}`, phone_id);
           } else {
             await enviarMensajeWhatsApp(phoneNumber, "⚠️ Mensaje citado no encontrado en la base de datos.", phone_id);
           }
@@ -212,3 +213,4 @@ app.get('/webhook', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
 });
+
