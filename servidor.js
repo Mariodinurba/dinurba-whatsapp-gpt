@@ -93,10 +93,7 @@ app.post('/webhook', async (req, res) => {
         );
 
         const conocimiento = JSON.parse(fs.readFileSync('./conocimiento_dinurba.json', 'utf8'));
-        const sistema = conocimiento.map(instr => ({
-          role: "system",
-          content: instr
-        }));
+        const sistema = conocimiento.map(instr => ({ role: "system", content: instr }));
 
         const contexto = [...sistema];
         const bloques = [];
@@ -104,11 +101,11 @@ app.post('/webhook', async (req, res) => {
         for (let i = 0; i < allMessages.length; i++) {
           const m = allMessages[i];
 
-          // Identificamos si este mensaje fue una cita
-          const esCita = m.rol === 'user' && allMessages.some(msj => msj.context_id === m.wa_id);
-          const esMensajeActualCitando = m.rol === 'user' && m.id === wa_id && quotedId;
+          if (m.rol === 'user' && m.wa_id === quotedId) {
+            mensajeCitado = m;
+          }
 
-          if (esMensajeActualCitando) {
+          if (m.rol === 'user' && m.wa_id === wa_id && quotedId) {
             const citado = allMessages.find(msg => msg.wa_id === quotedId);
             if (citado) {
               const quien = citado.rol === 'user' ? 'el cliente' : 'Dinurba';
@@ -118,26 +115,20 @@ app.post('/webhook', async (req, res) => {
                 timestamp: m.timestamp
               };
               bloques.push(bloque);
-
-              await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n🧾 "${citado.contenido}"`, phone_id);
-              await enviarMensajeWhatsApp(phoneNumber, `🧠 Bloque system para IA:\n${bloque.content}`, phone_id);
+              await enviarMensajeWhatsApp(phoneNumber, `📎 Mensaje citado encontrado:\n"${citado.contenido}"`, phone_id);
+              await enviarMensajeWhatsApp(phoneNumber, `📌 Bloque generado para IA:\n${bloque.content}`, phone_id);
             }
-          } else if (!quotedId || m.id !== wa_id) {
-            // Mensaje normal que sí se debe incluir
-            contexto.push({
-              role: m.rol === 'user' ? 'user' : 'assistant',
-              content: m.contenido
-            });
+          } else if (!(m.rol === 'user' && m.wa_id === wa_id && quotedId)) {
+            contexto.push({ role: m.rol === 'user' ? 'user' : 'assistant', content: m.contenido });
           }
 
-          // Insertar bloques de cita justo después del mensaje anterior no citado
           const bloquesParaInsertar = bloques.filter(b => b.timestamp === m.timestamp);
           for (const b of bloquesParaInsertar) {
             contexto.push({ role: b.role, content: b.content });
           }
         }
 
-        await enviarMensajeWhatsApp(phoneNumber, `📦 Contexto enviado a la IA:\n${JSON.stringify(contexto, null, 2)}`, phone_id);
+        await enviarMensajeWhatsApp(phoneNumber, `📦 Contexto final enviado a la IA:\n${JSON.stringify(contexto, null, 2)}`, phone_id);
 
         const respuestaIA = await axios.post(
           'https://api.openai.com/v1/chat/completions',
