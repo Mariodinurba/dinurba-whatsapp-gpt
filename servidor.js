@@ -74,7 +74,6 @@ app.post('/webhook', async (req, res) => {
       try {
         const db = await openDB();
 
-        // Guardar mensaje del cliente
         await db.run(
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
           [wa_id, phoneNumber, 'user', messageText, timestamp]
@@ -86,11 +85,8 @@ app.post('/webhook', async (req, res) => {
           quotedInfo += `\n🔍 Buscando mensaje con wa_id = ${quotedId}`;
         }
 
-        if (quotedInfo) {
-          await enviarMensajeWhatsApp(phoneNumber, quotedInfo, phone_id);
-        }
+        await enviarMensajeWhatsApp(phoneNumber, quotedInfo, phone_id);
 
-        // Obtener historial del cliente
         const seisMeses = 60 * 60 * 24 * 30 * 6;
         const desde = Date.now() / 1000 - seisMeses;
 
@@ -135,17 +131,13 @@ app.post('/webhook', async (req, res) => {
 
           if (citadoDB) {
             const quien = citadoDB.rol === 'user' ? 'el cliente' : 'Dinurba';
-            if (messageText.toLowerCase().includes("literalmente")) {
-              citado = {
-                role: 'system',
-                content: `El cliente pidió conocer el contenido literal de un mensaje citado. Este fue el mensaje citado: "${citadoDB.contenido}". No agregues nada más.`
-              };
-            } else {
-              citado = {
-                role: 'system',
-                content: `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
-              };
-            }
+            citado = {
+              role: 'system',
+              content: `El cliente citó un mensaje anterior de ${quien}: "${citadoDB.contenido}". Luego escribió: "${messageText}". Responde interpretando la relación entre ambos.`
+            };
+            await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n🧾 "${citadoDB.contenido}"`, phone_id);
+          } else {
+            await enviarMensajeWhatsApp(phoneNumber, "⚠️ Mensaje citado no encontrado en la base de datos.", phone_id);
           }
         }
 
