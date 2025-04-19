@@ -12,7 +12,7 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ASSISTANT_ID = 'asst_WXEwYWFnqSP60RLicaGonUIi';
 
-// ==================== Base de datos ====================
+// ======================= BASE DE DATOS =======================
 let db;
 const openDB = async () => {
   if (!db) {
@@ -35,14 +35,14 @@ const openDB = async () => {
   return db;
 };
 
-// ==================== WhatsApp ====================
+// ======================= WHATSAPP =======================
 const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
   await axios.post(
     `https://graph.facebook.com/v18.0/${phone_id}/messages`,
     {
-      messaging_product: "whatsapp",
+      messaging_product: 'whatsapp',
       to: numero,
-      text: { body: "🤖 " + texto }
+      text: { body: '🤖 ' + texto }
     },
     {
       headers: {
@@ -53,7 +53,7 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
   );
 };
 
-// ==================== Webhook POST ====================
+// ======================= WEBHOOK POST =======================
 app.post('/webhook', async (req, res) => {
   const body = req.body;
   if (!body.object) return res.sendStatus(404);
@@ -79,13 +79,13 @@ app.post('/webhook', async (req, res) => {
   try {
     const db = await openDB();
 
-    // Guardar mensaje del cliente
+    // Guardar mensaje del usuario
     await db.run(
       'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
       [wa_id, phoneNumber, 'user', messageText, timestamp]
     );
 
-    // Mensaje informativo por WhatsApp
+    // Enviar información por WhatsApp
     let info = `🧾 wa_id recibido:\n${wa_id}\n📦 Tipo de contenido: ${tipo}`;
     if (quotedId) {
       info += `\n📎 quotedId recibido:\n${quotedId}\n🔍 Buscando mensaje con wa_id = ${quotedId}`;
@@ -99,34 +99,45 @@ app.post('/webhook', async (req, res) => {
         await new Promise(resolve => setTimeout(resolve, 300));
         citado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
       }
+
       if (citado) {
         const quien = citado.rol === 'user' ? 'el cliente' : 'Dinurba';
         await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citado.contenido}"`, phone_id);
+
         const bloque = `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Luego escribió: "${messageText}". Interpreta la relación entre ambos.`;
+
         await db.run(
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
           [`system-${wa_id}`, phoneNumber, 'system', bloque, timestamp]
         );
+
         await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloque}`, phone_id);
         await db.run('UPDATE conversaciones SET rol = ? WHERE wa_id = ?', ['user_omitido', wa_id]);
       }
     }
 
-    // Obtener contexto
+    // Obtener historial
     const seisMeses = 60 * 60 * 24 * 30 * 6;
     const desde = Date.now() / 1000 - seisMeses;
+
     const mensajesCliente = await db.all(
       `SELECT * FROM conversaciones WHERE numero = ? AND rol = 'user' AND timestamp >= ? ORDER BY timestamp DESC LIMIT 30`,
       [phoneNumber, desde]
     );
-    const primerTimestamp = mensajesCliente.length > 0 ? mensajesCliente[mensajesCliente.length - 1].timestamp : Date.now() / 1000;
+
+    const primerTimestamp = mensajesCliente.length > 0
+      ? mensajesCliente[mensajesCliente.length - 1].timestamp
+      : Date.now() / 1000;
+
     const allMessages = await db.all(
       `SELECT * FROM conversaciones WHERE numero = ? AND timestamp >= ? AND rol != 'user_omitido' ORDER BY timestamp ASC`,
       [phoneNumber, primerTimestamp]
     );
+
     const contexto = allMessages.map(msg => ({
-      role: msg.rol === 'user' ? 'user' :
-            msg.rol === 'assistant' || msg.rol === 'dinurba' ? 'assistant' : 'system',
+      role: msg.rol === 'user' ? 'user'
+           : msg.rol === 'assistant' || msg.rol === 'dinurba' ? 'assistant'
+           : 'system',
       content: msg.contenido
     }));
 
@@ -140,13 +151,17 @@ app.post('/webhook', async (req, res) => {
         'OpenAI-Beta': 'assistants=v2'
       }
     });
+
     const thread_id = thread.data.id;
 
-    // Agregar todos los mensajes del contexto al thread
+    // Agregar todos los mensajes al thread
     for (const msg of contexto) {
       await axios.post(
         `https://api.openai.com/v1/threads/${thread_id}/messages`,
-        { role: msg.role, content: msg.content },
+        {
+          role: msg.role === 'system' ? 'user' : msg.role,
+          content: msg.content
+        },
         {
           headers: {
             Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -157,7 +172,7 @@ app.post('/webhook', async (req, res) => {
       );
     }
 
-    // Ejecutar el Assistant
+    // Ejecutar Assistant
     const run = await axios.post(
       `https://api.openai.com/v1/threads/${thread_id}/runs`,
       { assistant_id: ASSISTANT_ID },
@@ -170,7 +185,7 @@ app.post('/webhook', async (req, res) => {
       }
     );
 
-    // Esperar respuesta
+    // Esperar resultado
     let status = "queued";
     while (status !== "completed" && status !== "failed") {
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -186,7 +201,6 @@ app.post('/webhook', async (req, res) => {
       status = check.data.status;
     }
 
-    // Obtener y enviar respuesta
     if (status === "completed") {
       const messages = await axios.get(
         `https://api.openai.com/v1/threads/${thread_id}/messages`,
@@ -197,10 +211,12 @@ app.post('/webhook', async (req, res) => {
           }
         }
       );
+
       const respuesta = messages.data.data.find(m => m.role === 'assistant');
       const texto = respuesta?.content?.[0]?.text?.value || "No hubo respuesta.";
 
       await enviarMensajeWhatsApp(phoneNumber, texto.slice(0, 4096), phone_id);
+
       await db.run(
         'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
         [run.data.id, phoneNumber, 'dinurba', texto, Date.now() / 1000]
@@ -218,7 +234,7 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
-// ==================== Webhook GET ====================
+// ======================= WEBHOOK GET =======================
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -232,7 +248,7 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-// ==================== Iniciar servidor ====================
+// ======================= INICIAR SERVIDOR =======================
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
 });
