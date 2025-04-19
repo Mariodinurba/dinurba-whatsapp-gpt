@@ -94,10 +94,11 @@ app.post('/webhook', async (req, res) => {
         citado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
       }
 
-      if (citado) {
-        const quien = citado.rol === 'user' ? 'el cliente'
-                    : (citado.rol === 'dinurba' || citado.rol === 'assistant') ? 'Dinurba'
-                    : 'el sistema';
+      if (['user', 'dinurba', 'assistant', 'system'].includes(citado.rol)) {
+        const quien =
+          citado.rol === 'user' ? 'el cliente' :
+          citado.rol === 'dinurba' || citado.rol === 'assistant' ? 'Dinurba' :
+          'el sistema';
 
         await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citado.contenido}"`, phone_id);
 
@@ -110,8 +111,10 @@ app.post('/webhook', async (req, res) => {
 
         await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloque}`, phone_id);
 
-        // Siempre marcar como omitido el mensaje original del usuario cuando hay una cita
-        await db.run('UPDATE conversaciones SET rol = ? WHERE wa_id = ?', ['user_omitido', wa_id]);
+        await db.run(
+          'UPDATE conversaciones SET rol = ? WHERE wa_id = ?',
+          ['user_omitido', wa_id]
+        );
       }
     }
 
