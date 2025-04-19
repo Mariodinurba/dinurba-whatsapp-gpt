@@ -28,7 +28,12 @@ const openDB = async () => {
         rol TEXT,
         contenido TEXT,
         timestamp INTEGER
-      )
+      );
+
+      CREATE TABLE IF NOT EXISTS hilos (
+        numero TEXT PRIMARY KEY,
+        thread_id TEXT
+      );
     `);
   }
   return db;
@@ -108,6 +113,8 @@ app.post('/webhook', async (req, res) => {
       [wa_id, phoneNumber, 'user', messageText, timestamp]
     );
 
+    let systemBlock = null;
+
     if (quotedId) {
       let citado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
       if (!citado) {
@@ -118,11 +125,11 @@ app.post('/webhook', async (req, res) => {
       if (['user', 'dinurba', 'assistant', 'system'].includes(citado?.rol)) {
         const quien = citado.rol === 'user' ? 'el cliente' : citado.rol === 'dinurba' || citado.rol === 'assistant' ? 'Dinurba' : 'el sistema';
 
-        const bloque = `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Y escribió sobre el mensaje citado: "${messageText}".`;
+        systemBlock = `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Y escribió sobre el mensaje citado: "${messageText}".`;
 
         await db.run(
           'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
-          [`system-${wa_id}`, phoneNumber, 'system', bloque, timestamp]
+          [`system-${wa_id}`, phoneNumber, 'system', systemBlock, timestamp]
         );
 
         await db.run(
@@ -132,42 +139,27 @@ app.post('/webhook', async (req, res) => {
       }
     }
 
-    const seisMeses = 60 * 60 * 24 * 30 * 6;
-    const desde = Date.now() / 1000 - seisMeses;
+    let hilo = await db.get('SELECT thread_id FROM hilos WHERE numero = ?', [phoneNumber]);
+    let thread_id;
 
-    const mensajesCliente = await db.all(
-      `SELECT * FROM conversaciones WHERE numero = ? AND rol = 'user' AND timestamp >= ? ORDER BY timestamp DESC LIMIT 30`,
-      [phoneNumber, desde]
-    );
+    if (hilo) {
+      thread_id = hilo.thread_id;
+    } else {
+      const nuevaConversacion = await axios.post('https://api.openai.com/v1/threads', {}, {
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
+        }
+      });
+      thread_id = nuevaConversacion.data.id;
+      await db.run('INSERT INTO hilos (numero, thread_id) VALUES (?, ?)', [phoneNumber, thread_id]);
+    }
 
-    const primerTimestamp = mensajesCliente.length > 0 ? mensajesCliente[mensajesCliente.length - 1].timestamp : Date.now() / 1000;
-
-    const allMessages = await db.all(
-      `SELECT * FROM conversaciones WHERE numero = ? AND timestamp >= ? ORDER BY timestamp ASC`,
-      [phoneNumber, primerTimestamp]
-    );
-
-    const contexto = allMessages
-      .filter(msg => msg.rol !== 'user_omitido')
-      .map(msg => ({
-        role: msg.rol === 'system' ? 'user' : (msg.rol === 'user' ? 'user' : 'assistant'),
-        content: msg.contenido
-      }));
-
-    const thread = await axios.post('https://api.openai.com/v1/threads', {}, {
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-        'OpenAI-Beta': 'assistants=v2'
-      }
-    });
-
-    const thread_id = thread.data.id;
-
-    for (const msg of contexto) {
+    if (systemBlock) {
       await axios.post(
         `https://api.openai.com/v1/threads/${thread_id}/messages`,
-        { role: msg.role, content: msg.content },
+        { role: 'user', content: systemBlock },
         {
           headers: {
             Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -177,6 +169,18 @@ app.post('/webhook', async (req, res) => {
         }
       );
     }
+
+    await axios.post(
+      `https://api.openai.com/v1/threads/${thread_id}/messages`,
+      { role: 'user', content: messageText },
+      {
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
+        }
+      }
+    );
 
     const run = await axios.post(
       `https://api.openai.com/v1/threads/${thread_id}/runs`,
@@ -191,8 +195,9 @@ app.post('/webhook', async (req, res) => {
     );
 
     let status = 'queued';
-    while (status !== 'completed' && status !== 'failed') {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+    let intentos = 0;
+    while (status !== 'completed' && status !== 'failed' && intentos < 20) {
+      await new Promise(resolve => setTimeout(resolve, 500));
       const check = await axios.get(
         `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}`,
         {
@@ -203,6 +208,7 @@ app.post('/webhook', async (req, res) => {
         }
       );
       status = check.data.status;
+      intentos++;
     }
 
     if (status === 'completed') {
@@ -219,7 +225,6 @@ app.post('/webhook', async (req, res) => {
       const respuesta = messages.data.data.find(m => m.role === 'assistant');
       const texto = respuesta?.content?.[0]?.text?.value || 'No hubo respuesta.';
 
-      // Verificar si la IA pidió enviar un PDF (v2 API)
       if (respuesta?.tool_calls) {
         for (const tool of respuesta.tool_calls) {
           if (tool.function?.name === 'enviar_pdf') {
@@ -238,7 +243,6 @@ app.post('/webhook', async (req, res) => {
     } else {
       await enviarMensajeWhatsApp(phoneNumber, '❌ El Assistant falló al procesar tu mensaje.', phone_id);
     }
-
   } catch (error) {
     const msg = error.response?.data?.error?.message || error.message;
     console.error('❌ Error:', msg);
