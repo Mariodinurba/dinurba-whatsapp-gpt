@@ -219,9 +219,9 @@ app.post('/webhook', async (req, res) => {
       const respuesta = messages.data.data.find(m => m.role === 'assistant');
       const texto = respuesta?.content?.[0]?.text?.value || 'No hubo respuesta.';
 
-      // Verificar si la IA pidió enviar un PDF
-      if (respuesta?.content?.[0]?.tool_calls) {
-        for (const tool of respuesta.content[0].tool_calls) {
+      // Verificar si la IA pidió enviar un PDF (v2 API)
+      if (respuesta?.tool_calls) {
+        for (const tool of respuesta.tool_calls) {
           if (tool.function?.name === 'enviar_pdf') {
             const { url, nombre } = JSON.parse(tool.function.arguments);
             await enviarPDFWhatsApp(phoneNumber, url, nombre, phone_id);
