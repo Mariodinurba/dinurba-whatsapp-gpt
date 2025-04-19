@@ -231,7 +231,7 @@ app.post('/webhook', async (req, res) => {
 
           if (tool.function?.name === 'enviar_pdf') {
             try {
-              const { url, nombre } = JSON.parse(tool.function.arguments);
+              const { url, nombre const { url, nombre } = JSON.parse(tool.function.arguments);
               await enviarPDFWhatsApp(phoneNumber, url, nombre, phone_id);
 
               // Confirmar a OpenAI que se ejecutó correctamente
