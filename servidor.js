@@ -110,6 +110,7 @@ app.post('/webhook', async (req, res) => {
 
         await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloque}`, phone_id);
 
+        // Siempre marcar como omitido el mensaje original del usuario cuando hay una cita
         await db.run('UPDATE conversaciones SET rol = ? WHERE wa_id = ?', ['user_omitido', wa_id]);
       }
     }
