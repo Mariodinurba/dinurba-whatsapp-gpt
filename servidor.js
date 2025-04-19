@@ -40,7 +40,7 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
     {
       messaging_product: 'whatsapp',
       to: numero,
-      text: { body: '🤖 ' + texto }
+      text: { body: '💬 ' + texto }
     },
     {
       headers: {
