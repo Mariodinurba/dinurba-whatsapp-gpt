@@ -5,9 +5,11 @@ const axios = require('axios');
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 require('dotenv').config();
+const path = require('path');
 
 const app = express();
 app.use(express.json());
+app.use('/descargas', express.static(path.join(__dirname, 'archivos')));
 
 const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
