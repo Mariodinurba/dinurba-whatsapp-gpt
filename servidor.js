@@ -95,8 +95,9 @@ app.post('/webhook', async (req, res) => {
       }
 
       if (citado) {
-        const quien = citado.rol === 'user' ? 'el cliente' :
-                      citado.rol === 'dinurba' ? 'Dinurba' : 'el sistema';
+        const quien = citado.rol === 'user' ? 'el cliente'
+                    : (citado.rol === 'dinurba' || citado.rol === 'assistant') ? 'Dinurba'
+                    : 'el sistema';
 
         await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citado.contenido}"`, phone_id);
 
@@ -133,10 +134,7 @@ app.post('/webhook', async (req, res) => {
     const contexto = allMessages
       .filter(msg => msg.rol !== 'user_omitido')
       .map(msg => ({
-        role:
-          msg.rol === 'user' ? 'user' :
-          msg.rol === 'assistant' || msg.rol === 'dinurba' ? 'assistant' :
-          'system',
+        role: msg.rol === 'system' ? 'user' : (msg.rol === 'user' ? 'user' : 'assistant'),
         content: msg.contenido
       }));
 
@@ -155,10 +153,7 @@ app.post('/webhook', async (req, res) => {
     for (const msg of contexto) {
       await axios.post(
         `https://api.openai.com/v1/threads/${thread_id}/messages`,
-        {
-          role: msg.role === 'system' ? 'user' : msg.role,
-          content: msg.content
-        },
+        { role: msg.role, content: msg.content },
         {
           headers: {
             Authorization: `Bearer ${OPENAI_API_KEY}`,
