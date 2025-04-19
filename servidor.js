@@ -53,6 +53,32 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
   return response.data.messages?.[0]?.id || null;
 };
 
+const enviarPDFWhatsApp = async (numero, urlPDF, nombreArchivo, phone_id) => {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v18.0/${phone_id}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: numero,
+        type: 'document',
+        document: {
+          link: urlPDF,
+          filename: nombreArchivo
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    console.log('📄 PDF enviado a', numero);
+  } catch (error) {
+    console.error('❌ Error al enviar PDF:', error.response?.data || error.message);
+  }
+};
+
 app.post('/webhook', async (req, res) => {
   const body = req.body;
   if (!body.object) return res.sendStatus(404);
@@ -82,7 +108,6 @@ app.post('/webhook', async (req, res) => {
       [wa_id, phoneNumber, 'user', messageText, timestamp]
     );
 
-    // Si hay mensaje citado
     if (quotedId) {
       let citado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
       if (!citado) {
@@ -91,10 +116,7 @@ app.post('/webhook', async (req, res) => {
       }
 
       if (['user', 'dinurba', 'assistant', 'system'].includes(citado?.rol)) {
-        const quien =
-          citado.rol === 'user' ? 'el cliente' :
-          citado.rol === 'dinurba' || citado.rol === 'assistant' ? 'Dinurba' :
-          'el sistema';
+        const quien = citado.rol === 'user' ? 'el cliente' : citado.rol === 'dinurba' || citado.rol === 'assistant' ? 'Dinurba' : 'el sistema';
 
         const bloque = `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Y escribió sobre el mensaje citado: "${messageText}".`;
 
@@ -118,9 +140,7 @@ app.post('/webhook', async (req, res) => {
       [phoneNumber, desde]
     );
 
-    const primerTimestamp = mensajesCliente.length > 0
-      ? mensajesCliente[mensajesCliente.length - 1].timestamp
-      : Date.now() / 1000;
+    const primerTimestamp = mensajesCliente.length > 0 ? mensajesCliente[mensajesCliente.length - 1].timestamp : Date.now() / 1000;
 
     const allMessages = await db.all(
       `SELECT * FROM conversaciones WHERE numero = ? AND timestamp >= ? ORDER BY timestamp ASC`,
@@ -134,7 +154,6 @@ app.post('/webhook', async (req, res) => {
         content: msg.contenido
       }));
 
-    // Crear thread
     const thread = await axios.post('https://api.openai.com/v1/threads', {}, {
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -145,7 +164,6 @@ app.post('/webhook', async (req, res) => {
 
     const thread_id = thread.data.id;
 
-    // Agregar mensajes al thread
     for (const msg of contexto) {
       await axios.post(
         `https://api.openai.com/v1/threads/${thread_id}/messages`,
@@ -160,7 +178,6 @@ app.post('/webhook', async (req, res) => {
       );
     }
 
-    // Ejecutar assistant
     const run = await axios.post(
       `https://api.openai.com/v1/threads/${thread_id}/runs`,
       { assistant_id: ASSISTANT_ID },
@@ -201,6 +218,16 @@ app.post('/webhook', async (req, res) => {
 
       const respuesta = messages.data.data.find(m => m.role === 'assistant');
       const texto = respuesta?.content?.[0]?.text?.value || 'No hubo respuesta.';
+
+      // Verificar si la IA pidió enviar un PDF
+      if (respuesta?.content?.[0]?.tool_calls) {
+        for (const tool of respuesta.content[0].tool_calls) {
+          if (tool.function?.name === 'enviar_pdf') {
+            const { url, nombre } = JSON.parse(tool.function.arguments);
+            await enviarPDFWhatsApp(phoneNumber, url, nombre, phone_id);
+          }
+        }
+      }
 
       const respuestaId = await enviarMensajeWhatsApp(phoneNumber, texto.slice(0, 4096), phone_id);
 
