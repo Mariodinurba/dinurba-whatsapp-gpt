@@ -1,3 +1,5 @@
+// Código corregido y limpio (con tool_call funcionando sin duplicados)
+
 const express = require('express');
 const axios = require('axios');
 const sqlite3 = require('sqlite3');
@@ -234,7 +236,6 @@ app.post('/webhook', async (req, res) => {
               const { url, nombre } = JSON.parse(tool.function.arguments);
               await enviarPDFWhatsApp(phoneNumber, url, nombre, phone_id);
 
-              // Confirmar a OpenAI que se ejecutó correctamente
               await axios.post(
                 `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}/submit_tool_outputs`,
                 {
@@ -262,34 +263,6 @@ app.post('/webhook', async (req, res) => {
             }
           }
         }
-      } = JSON.parse(tool.function.arguments);
-            await enviarPDFWhatsApp(phoneNumber, url, nombre, phone_id);
-
-            // Confirmar a OpenAI que la herramienta se ejecutó
-            await axios.post(
-              `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}/submit_tool_outputs`,
-              {
-                tool_outputs: [
-                  {
-                    tool_call_id: tool.id,
-                    output: "PDF enviado correctamente."
-                  }
-                ]
-              },
-              {
-                headers: {
-                  Authorization: `Bearer ${OPENAI_API_KEY}`,
-                  'Content-Type': 'application/json',
-                  'OpenAI-Beta': 'assistants=v2'
-                }
-              }
-            ).then(() => {
-              console.log('✅ Tool output enviado correctamente.');
-            }).catch(err => {
-              console.error('❌ Error al enviar tool output:', err.response?.data || err.message);
-            });
-          }
-        }
       }
 
       const respuestaId = await enviarMensajeWhatsApp(phoneNumber, texto.slice(0, 4096), phone_id);
@@ -300,19 +273,19 @@ app.post('/webhook', async (req, res) => {
       );
     } else {
       console.log('🧪 RUN ID:', run.data.id);
-const debug = await axios.get(
-  `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}`,
-  {
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      'OpenAI-Beta': 'assistants=v2'
-    }
-  }
-);
-console.log('🧠 RUN STATUS:', debug.data.status);
-console.log('🧠 RUN OUTPUT:', JSON.stringify(debug.data, null, 2));
+      const debug = await axios.get(
+        `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            'OpenAI-Beta': 'assistants=v2'
+          }
+        }
+      );
+      console.log('🧠 RUN STATUS:', debug.data.status);
+      console.log('🧠 RUN OUTPUT:', JSON.stringify(debug.data, null, 2));
 
-await enviarMensajeWhatsApp(phoneNumber, '❌ El Assistant falló al procesar tu mensaje.', phone_id);
+      await enviarMensajeWhatsApp(phoneNumber, '❌ El Assistant falló al procesar tu mensaje.', phone_id);
     }
   } catch (error) {
     const msg = error.response?.data?.error?.message || error.message;
