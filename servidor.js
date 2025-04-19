@@ -241,7 +241,20 @@ app.post('/webhook', async (req, res) => {
         [respuestaId, phoneNumber, 'dinurba', texto, Date.now() / 1000]
       );
     } else {
-      await enviarMensajeWhatsApp(phoneNumber, '❌ El Assistant falló al procesar tu mensaje.', phone_id);
+      console.log('🧪 RUN ID:', run.data.id);
+const debug = await axios.get(
+  `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}`,
+  {
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'OpenAI-Beta': 'assistants=v2'
+    }
+  }
+);
+console.log('🧠 RUN STATUS:', debug.data.status);
+console.log('🧠 RUN OUTPUT:', JSON.stringify(debug.data, null, 2));
+
+await enviarMensajeWhatsApp(phoneNumber, '❌ El Assistant falló al procesar tu mensaje.', phone_id);
     }
   } catch (error) {
     const msg = error.response?.data?.error?.message || error.message;
