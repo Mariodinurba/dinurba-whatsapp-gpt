@@ -76,7 +76,7 @@ app.post('/webhook', async (req, res) => {
   try {
     const db = await openDB();
 
-    // Primero registramos el mensaje del usuario en la base de datos
+    // Registramos el mensaje del usuario en la base de datos
     await db.run(
       'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
       [wa_id, phoneNumber, 'user', messageText, timestamp]
@@ -90,23 +90,49 @@ app.post('/webhook', async (req, res) => {
 
     // Verificar si el mensaje actual está citando otro mensaje
     if (quotedId) {
-      // Buscar el mensaje citado en la base de datos
+      // Primero buscamos el mensaje citado por wa_id exacto
       let citado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
       
-      // Si no lo encontramos inmediatamente, esperamos un poco y volvemos a intentar
+      // Si no lo encontramos, esperamos un poco y volvemos a intentar
       if (!citado) {
         await new Promise(resolve => setTimeout(resolve, 300));
         citado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
       }
+      
+      // Si aún no lo encontramos, intentamos una búsqueda más amplia para mensajes del bot
+      // Los IDs de WhatsApp pueden variar y los mensajes del bot podrían tener un formato diferente
+      if (!citado) {
+        // Consulta para encontrar el mensaje del bot más cercano en tiempo
+        const posiblesMensajesBot = await db.all(`
+          SELECT * FROM conversaciones 
+          WHERE numero = ? 
+          AND (rol = 'dinurba' OR rol = 'assistant')
+          ORDER BY timestamp DESC LIMIT 5
+        `, [phoneNumber]);
+        
+        // Enviar información de depuración sobre los posibles mensajes encontrados
+        if (posiblesMensajesBot.length > 0) {
+          let debugInfo = `🔍 Buscando entre los últimos ${posiblesMensajesBot.length} mensajes del bot:\n`;
+          for (const msg of posiblesMensajesBot) {
+            debugInfo += `ID: ${msg.wa_id.substring(0, 10)}..., Contenido: "${msg.contenido.substring(0, 30)}..."\n`;
+          }
+          await enviarMensajeWhatsApp(phoneNumber, debugInfo, phone_id);
+          
+          // Utilizamos el más reciente como una aproximación
+          citado = posiblesMensajesBot[0];
+        } else {
+          await enviarMensajeWhatsApp(phoneNumber, `⚠️ No se encontraron mensajes recientes del bot para comparar`, phone_id);
+        }
+      }
 
-      // Si encontramos el mensaje citado, procesamos la cita
+      // Si encontramos el mensaje citado (ya sea directamente o por aproximación), lo procesamos
       if (citado) {
         // Determinar quién es el autor del mensaje citado
         const quien = citado.rol === 'user' ? 'el cliente'
                     : (citado.rol === 'dinurba' || citado.rol === 'assistant') ? 'Dinurba'
                     : 'el sistema';
 
-        await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citado.contenido}"`, phone_id);
+        await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado (${citado.rol}):\n"${citado.contenido}"`, phone_id);
 
         // Creamos un bloque interpretativo para cualquier tipo de mensaje citado
         const bloque = `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Luego escribió: "${messageText}". Interpreta la relación entre ambos.`;
@@ -122,7 +148,7 @@ app.post('/webhook', async (req, res) => {
         // Marcamos el mensaje del usuario como "omitido" para que no se duplique en el contexto
         await db.run('UPDATE conversaciones SET rol = ? WHERE wa_id = ?', ['user_omitido', wa_id]);
       } else {
-        await enviarMensajeWhatsApp(phoneNumber, `⚠️ No se encontró el mensaje citado con wa_id = ${quotedId}`, phone_id);
+        await enviarMensajeWhatsApp(phoneNumber, `⚠️ No se encontró ningún mensaje citado con wa_id = ${quotedId}`, phone_id);
       }
     }
 
