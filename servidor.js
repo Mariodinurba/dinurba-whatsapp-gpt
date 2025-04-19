@@ -230,6 +230,26 @@ app.post('/webhook', async (req, res) => {
           if (tool.function?.name === 'enviar_pdf') {
             const { url, nombre } = JSON.parse(tool.function.arguments);
             await enviarPDFWhatsApp(phoneNumber, url, nombre, phone_id);
+
+            // Confirmar a OpenAI que la herramienta se ejecutó
+            await axios.post(
+              `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}/submit_tool_outputs`,
+              {
+                tool_outputs: [
+                  {
+                    tool_call_id: tool.id,
+                    output: "PDF enviado correctamente."
+                  }
+                ]
+              },
+              {
+                headers: {
+                  Authorization: `Bearer ${OPENAI_API_KEY}`,
+                  'Content-Type': 'application/json',
+                  'OpenAI-Beta': 'assistants=v2'
+                }
+              }
+            );
           }
         }
       }
