@@ -227,8 +227,42 @@ app.post('/webhook', async (req, res) => {
 
       if (respuesta?.tool_calls) {
         for (const tool of respuesta.tool_calls) {
+          console.log('🛠 Ejecutando tool_call:', tool);
+
           if (tool.function?.name === 'enviar_pdf') {
-            const { url, nombre } = JSON.parse(tool.function.arguments);
+            try {
+              const { url, nombre } = JSON.parse(tool.function.arguments);
+              await enviarPDFWhatsApp(phoneNumber, url, nombre, phone_id);
+
+              // Confirmar a OpenAI que se ejecutó correctamente
+              await axios.post(
+                `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}/submit_tool_outputs`,
+                {
+                  tool_outputs: [
+                    {
+                      tool_call_id: tool.id,
+                      output: "PDF enviado correctamente."
+                    }
+                  ]
+                },
+                {
+                  headers: {
+                    Authorization: `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json',
+                    'OpenAI-Beta': 'assistants=v2'
+                  }
+                }
+              ).then(() => {
+                console.log('✅ Tool output enviado correctamente.');
+              }).catch(err => {
+                console.error('❌ Error al enviar tool output:', err.response?.data || err.message);
+              });
+            } catch (e) {
+              console.error('❌ Error ejecutando tool_call:', e);
+            }
+          }
+        }
+      } = JSON.parse(tool.function.arguments);
             await enviarPDFWhatsApp(phoneNumber, url, nombre, phone_id);
 
             // Confirmar a OpenAI que la herramienta se ejecutó
