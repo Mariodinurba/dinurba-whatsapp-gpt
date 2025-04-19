@@ -1,4 +1,4 @@
-// Código corregido para manejar correctamente requires_action
+// ¡Código corregido para evitar reenvíos automáticos del PDF!
 
 const express = require('express');
 const axios = require('axios');
@@ -58,7 +58,6 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
       }
     }
   );
-
   return response.data.messages?.[0]?.id || null;
 };
 
@@ -118,7 +117,6 @@ app.post('/webhook', async (req, res) => {
     );
 
     let systemBlock = null;
-
     if (quotedId) {
       let citado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
       if (!citado) {
@@ -128,7 +126,6 @@ app.post('/webhook', async (req, res) => {
 
       if (['user', 'dinurba', 'assistant', 'system'].includes(citado?.rol)) {
         const quien = citado.rol === 'user' ? 'el cliente' : citado.rol === 'dinurba' || citado.rol === 'assistant' ? 'Dinurba' : 'el sistema';
-
         systemBlock = `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Y escribió sobre el mensaje citado: "${messageText}".`;
 
         await db.run(
@@ -136,10 +133,7 @@ app.post('/webhook', async (req, res) => {
           [`system-${wa_id}`, phoneNumber, 'system', systemBlock, timestamp]
         );
 
-        await db.run(
-          'UPDATE conversaciones SET rol = ? WHERE wa_id = ?',
-          ['user_omitido', wa_id]
-        );
+        await db.run('UPDATE conversaciones SET rol = ? WHERE wa_id = ?', ['user_omitido', wa_id]);
       }
     }
 
@@ -186,45 +180,41 @@ app.post('/webhook', async (req, res) => {
       }
     );
 
-    let run_id;
-    let status;
-    const ejecutarRun = async () => {
-      const run = await axios.post(
-        `https://api.openai.com/v1/threads/${thread_id}/runs`,
-        { assistant_id: ASSISTANT_ID },
+    let run = await axios.post(
+      `https://api.openai.com/v1/threads/${thread_id}/runs`,
+      { assistant_id: ASSISTANT_ID },
+      {
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+          'OpenAI-Beta': 'assistants=v2'
+        }
+      }
+    );
+
+    let status = 'queued';
+    let intentos = 0;
+    while (status !== 'completed' && status !== 'failed' && intentos < 20) {
+      await new Promise(resolve => setTimeout(resolve, 800));
+      const check = await axios.get(
+        `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}`,
         {
           headers: {
             Authorization: `Bearer ${OPENAI_API_KEY}`,
-            'Content-Type': 'application/json',
             'OpenAI-Beta': 'assistants=v2'
           }
         }
       );
-      run_id = run.data.id;
-      status = run.data.status;
 
-      while (status !== 'completed' && status !== 'failed') {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        const check = await axios.get(
-          `https://api.openai.com/v1/threads/${thread_id}/runs/${run_id}`,
-          {
-            headers: {
-              Authorization: `Bearer ${OPENAI_API_KEY}`,
-              'OpenAI-Beta': 'assistants=v2'
-            }
-          }
-        );
-        status = check.data.status;
-
-        if (status === 'requires_action') {
-          const toolCalls = check.data.required_action?.submit_tool_outputs?.tool_calls || [];
-          for (const tool of toolCalls) {
-            if (tool.function?.name === 'enviar_pdf') {
+      if (check.data.required_action?.submit_tool_outputs) {
+        for (const tool of check.data.required_action.submit_tool_outputs.tool_calls) {
+          if (tool.function?.name === 'enviar_pdf') {
+            try {
               const { url, nombre } = JSON.parse(tool.function.arguments);
               await enviarPDFWhatsApp(phoneNumber, url, nombre, phone_id);
 
               await axios.post(
-                `https://api.openai.com/v1/threads/${thread_id}/runs/${run_id}/submit_tool_outputs`,
+                `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}/submit_tool_outputs`,
                 {
                   tool_outputs: [
                     {
@@ -241,13 +231,30 @@ app.post('/webhook', async (req, res) => {
                   }
                 }
               );
+
+              // 🔁 Reanudar el run para completarlo correctamente
+              run = await axios.post(
+                `https://api.openai.com/v1/threads/${thread_id}/runs`,
+                { assistant_id: ASSISTANT_ID },
+                {
+                  headers: {
+                    Authorization: `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json',
+                    'OpenAI-Beta': 'assistants=v2'
+                  }
+                }
+              );
+              intentos = 0;
+            } catch (e) {
+              console.error('❌ Error ejecutando tool_call:', e);
             }
           }
         }
       }
-    };
 
-    await ejecutarRun();
+      status = check.data.status;
+      intentos++;
+    }
 
     if (status === 'completed') {
       const messages = await axios.get(
@@ -264,12 +271,12 @@ app.post('/webhook', async (req, res) => {
       const texto = respuesta?.content?.[0]?.text?.value || 'No hubo respuesta.';
 
       const respuestaId = await enviarMensajeWhatsApp(phoneNumber, texto.slice(0, 4096), phone_id);
-
       await db.run(
         'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
         [respuestaId, phoneNumber, 'dinurba', texto, Date.now() / 1000]
       );
     } else {
+      console.log('🧠 RUN STATUS:', status);
       await enviarMensajeWhatsApp(phoneNumber, '❌ El Assistant falló al procesar tu mensaje.', phone_id);
     }
   } catch (error) {
