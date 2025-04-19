@@ -1,4 +1,4 @@
-// Código corregido y limpio (con tool_call funcionando sin duplicados)
+// Código corregido para manejar correctamente requires_action
 
 const express = require('express');
 const axios = require('axios');
@@ -184,60 +184,45 @@ app.post('/webhook', async (req, res) => {
       }
     );
 
-    const run = await axios.post(
-      `https://api.openai.com/v1/threads/${thread_id}/runs`,
-      { assistant_id: ASSISTANT_ID },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-          'OpenAI-Beta': 'assistants=v2'
-        }
-      }
-    );
-
-    let status = 'queued';
-    let intentos = 0;
-    while (status !== 'completed' && status !== 'failed' && intentos < 20) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      const check = await axios.get(
-        `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}`,
+    let run_id;
+    let status;
+    const ejecutarRun = async () => {
+      const run = await axios.post(
+        `https://api.openai.com/v1/threads/${thread_id}/runs`,
+        { assistant_id: ASSISTANT_ID },
         {
           headers: {
             Authorization: `Bearer ${OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
             'OpenAI-Beta': 'assistants=v2'
           }
         }
       );
-      status = check.data.status;
-      intentos++;
-    }
+      run_id = run.data.id;
+      status = run.data.status;
 
-    if (status === 'completed') {
-      const messages = await axios.get(
-        `https://api.openai.com/v1/threads/${thread_id}/messages`,
-        {
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            'OpenAI-Beta': 'assistants=v2'
+      while (status !== 'completed' && status !== 'failed') {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const check = await axios.get(
+          `https://api.openai.com/v1/threads/${thread_id}/runs/${run_id}`,
+          {
+            headers: {
+              Authorization: `Bearer ${OPENAI_API_KEY}`,
+              'OpenAI-Beta': 'assistants=v2'
+            }
           }
-        }
-      );
+        );
+        status = check.data.status;
 
-      const respuesta = messages.data.data.find(m => m.role === 'assistant');
-      const texto = respuesta?.content?.[0]?.text?.value || 'No hubo respuesta.';
-
-      if (respuesta?.tool_calls) {
-        for (const tool of respuesta.tool_calls) {
-          console.log('🛠 Ejecutando tool_call:', tool);
-
-          if (tool.function?.name === 'enviar_pdf') {
-            try {
+        if (status === 'requires_action') {
+          const toolCalls = check.data.required_action?.submit_tool_outputs?.tool_calls || [];
+          for (const tool of toolCalls) {
+            if (tool.function?.name === 'enviar_pdf') {
               const { url, nombre } = JSON.parse(tool.function.arguments);
               await enviarPDFWhatsApp(phoneNumber, url, nombre, phone_id);
 
               await axios.post(
-                `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}/submit_tool_outputs`,
+                `https://api.openai.com/v1/threads/${thread_id}/runs/${run_id}/submit_tool_outputs`,
                 {
                   tool_outputs: [
                     {
@@ -253,17 +238,28 @@ app.post('/webhook', async (req, res) => {
                     'OpenAI-Beta': 'assistants=v2'
                   }
                 }
-              ).then(() => {
-                console.log('✅ Tool output enviado correctamente.');
-              }).catch(err => {
-                console.error('❌ Error al enviar tool output:', err.response?.data || err.message);
-              });
-            } catch (e) {
-              console.error('❌ Error ejecutando tool_call:', e);
+              );
             }
           }
         }
       }
+    };
+
+    await ejecutarRun();
+
+    if (status === 'completed') {
+      const messages = await axios.get(
+        `https://api.openai.com/v1/threads/${thread_id}/messages`,
+        {
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            'OpenAI-Beta': 'assistants=v2'
+          }
+        }
+      );
+
+      const respuesta = messages.data.data.find(m => m.role === 'assistant');
+      const texto = respuesta?.content?.[0]?.text?.value || 'No hubo respuesta.';
 
       const respuestaId = await enviarMensajeWhatsApp(phoneNumber, texto.slice(0, 4096), phone_id);
 
@@ -272,19 +268,6 @@ app.post('/webhook', async (req, res) => {
         [respuestaId, phoneNumber, 'dinurba', texto, Date.now() / 1000]
       );
     } else {
-      console.log('🧪 RUN ID:', run.data.id);
-      const debug = await axios.get(
-        `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}`,
-        {
-          headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
-            'OpenAI-Beta': 'assistants=v2'
-          }
-        }
-      );
-      console.log('🧠 RUN STATUS:', debug.data.status);
-      console.log('🧠 RUN OUTPUT:', JSON.stringify(debug.data, null, 2));
-
       await enviarMensajeWhatsApp(phoneNumber, '❌ El Assistant falló al procesar tu mensaje.', phone_id);
     }
   } catch (error) {
