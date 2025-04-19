@@ -249,7 +249,11 @@ app.post('/webhook', async (req, res) => {
                   'OpenAI-Beta': 'assistants=v2'
                 }
               }
-            );
+            ).then(() => {
+              console.log('✅ Tool output enviado correctamente.');
+            }).catch(err => {
+              console.error('❌ Error al enviar tool output:', err.response?.data || err.message);
+            });
           }
         }
       }
