@@ -71,27 +71,18 @@ app.post('/webhook', async (req, res) => {
   const timestamp = parseInt(messageObject.timestamp);
   const wa_id = messageObject.id;
   const quotedId = messageObject.context?.id || null;
-  const tipo = messageObject.type || 'desconocido';
 
   if (!messageText) return res.sendStatus(200);
 
   try {
     const db = await openDB();
 
-    // Guardar mensaje del cliente
     await db.run(
       'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
       [wa_id, phoneNumber, 'user', messageText, timestamp]
     );
 
-    // Mostrar IDs por WhatsApp
-    let info = `🧾 wa_id recibido:\n${wa_id}\n📦 Tipo de contenido: ${tipo}`;
-    if (quotedId) {
-      info += `\n📎 quotedId recibido:\n${quotedId}\n🔍 Buscando mensaje con wa_id = ${quotedId}`;
-    }
-    await enviarMensajeWhatsApp(phoneNumber, info, phone_id);
-
-    // Buscar mensaje citado
+    // Si hay mensaje citado
     if (quotedId) {
       let citado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
       if (!citado) {
@@ -105,8 +96,6 @@ app.post('/webhook', async (req, res) => {
           citado.rol === 'dinurba' || citado.rol === 'assistant' ? 'Dinurba' :
           'el sistema';
 
-        await enviarMensajeWhatsApp(phoneNumber, `✅ Mensaje citado encontrado:\n"${citado.contenido}"`, phone_id);
-
         const bloque = `El cliente citó un mensaje anterior de ${quien}: "${citado.contenido}". Y escribió sobre el mensaje citado: "${messageText}".`;
 
         await db.run(
@@ -114,13 +103,13 @@ app.post('/webhook', async (req, res) => {
           [`system-${wa_id}`, phoneNumber, 'system', bloque, timestamp]
         );
 
-        await enviarMensajeWhatsApp(phoneNumber, `🤖 Bloque system guardado:\n${bloque}`, phone_id);
-
-        await db.run('UPDATE conversaciones SET rol = ? WHERE wa_id = ?', ['user_omitido', wa_id]);
+        await db.run(
+          'UPDATE conversaciones SET rol = ? WHERE wa_id = ?',
+          ['user_omitido', wa_id]
+        );
       }
     }
 
-    // Obtener contexto de 30 mensajes
     const seisMeses = 60 * 60 * 24 * 30 * 6;
     const desde = Date.now() / 1000 - seisMeses;
 
@@ -145,9 +134,7 @@ app.post('/webhook', async (req, res) => {
         content: msg.contenido
       }));
 
-    await enviarMensajeWhatsApp(phoneNumber, `🧠 Contexto enviado a la IA:\n\`\`\`\n${JSON.stringify(contexto, null, 2)}\n\`\`\``, phone_id);
-
-    // Crear thread en Assistants API
+    // Crear thread
     const thread = await axios.post('https://api.openai.com/v1/threads', {}, {
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -158,7 +145,7 @@ app.post('/webhook', async (req, res) => {
 
     const thread_id = thread.data.id;
 
-    // Enviar todos los mensajes al thread
+    // Agregar mensajes al thread
     for (const msg of contexto) {
       await axios.post(
         `https://api.openai.com/v1/threads/${thread_id}/messages`,
@@ -173,7 +160,7 @@ app.post('/webhook', async (req, res) => {
       );
     }
 
-    // Ejecutar Assistant
+    // Ejecutar assistant
     const run = await axios.post(
       `https://api.openai.com/v1/threads/${thread_id}/runs`,
       { assistant_id: ASSISTANT_ID },
@@ -186,7 +173,6 @@ app.post('/webhook', async (req, res) => {
       }
     );
 
-    // Esperar a que termine
     let status = 'queued';
     while (status !== 'completed' && status !== 'failed') {
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -202,7 +188,6 @@ app.post('/webhook', async (req, res) => {
       status = check.data.status;
     }
 
-    // Obtener respuesta final
     if (status === 'completed') {
       const messages = await axios.get(
         `https://api.openai.com/v1/threads/${thread_id}/messages`,
