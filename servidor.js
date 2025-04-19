@@ -12,7 +12,7 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ASSISTANT_ID = 'asst_WXEwYWFnqSP60RLicaGonUIi';
 
-// ======================= BASE DE DATOS =======================
+// ==================== BASE DE DATOS ====================
 let db;
 const openDB = async () => {
   if (!db) {
@@ -35,7 +35,7 @@ const openDB = async () => {
   return db;
 };
 
-// ======================= WHATSAPP =======================
+// ==================== WHATSAPP ====================
 const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
   await axios.post(
     `https://graph.facebook.com/v18.0/${phone_id}/messages`,
@@ -53,7 +53,7 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
   );
 };
 
-// ======================= WEBHOOK POST =======================
+// ==================== WEBHOOK POST ====================
 app.post('/webhook', async (req, res) => {
   const body = req.body;
   if (!body.object) return res.sendStatus(404);
@@ -85,14 +85,14 @@ app.post('/webhook', async (req, res) => {
       [wa_id, phoneNumber, 'user', messageText, timestamp]
     );
 
-    // Enviar información por WhatsApp
+    // Mostrar wa_id y tipo
     let info = `🧾 wa_id recibido:\n${wa_id}\n📦 Tipo de contenido: ${tipo}`;
     if (quotedId) {
       info += `\n📎 quotedId recibido:\n${quotedId}\n🔍 Buscando mensaje con wa_id = ${quotedId}`;
     }
     await enviarMensajeWhatsApp(phoneNumber, info, phone_id);
 
-    // Procesar mensaje citado
+    // Si hay cita, generar bloque system
     if (quotedId) {
       let citado = await db.get('SELECT * FROM conversaciones WHERE wa_id = ?', [quotedId]);
       if (!citado) {
@@ -116,7 +116,7 @@ app.post('/webhook', async (req, res) => {
       }
     }
 
-    // Obtener historial
+    // Obtener contexto desde el mensaje más antiguo de los últimos 30 mensajes del cliente
     const seisMeses = 60 * 60 * 24 * 30 * 6;
     const desde = Date.now() / 1000 - seisMeses;
 
@@ -130,16 +130,19 @@ app.post('/webhook', async (req, res) => {
       : Date.now() / 1000;
 
     const allMessages = await db.all(
-      `SELECT * FROM conversaciones WHERE numero = ? AND timestamp >= ? AND rol != 'user_omitido' ORDER BY timestamp ASC`,
+      `SELECT * FROM conversaciones WHERE numero = ? AND timestamp >= ? ORDER BY timestamp ASC`,
       [phoneNumber, primerTimestamp]
     );
 
-    const contexto = allMessages.map(msg => ({
-      role: msg.rol === 'user' ? 'user'
-           : msg.rol === 'assistant' || msg.rol === 'dinurba' ? 'assistant'
-           : 'system',
-      content: msg.contenido
-    }));
+    const contexto = allMessages
+      .filter(msg => msg.rol !== 'user_omitido')
+      .map(msg => ({
+        role:
+          msg.rol === 'user' ? 'user' :
+          msg.rol === 'assistant' || msg.rol === 'dinurba' ? 'assistant' :
+          'system',
+        content: msg.contenido
+      }));
 
     await enviarMensajeWhatsApp(phoneNumber, `🧠 Contexto enviado a la IA:\n\`\`\`\n${JSON.stringify(contexto, null, 2)}\n\`\`\``, phone_id);
 
@@ -154,7 +157,7 @@ app.post('/webhook', async (req, res) => {
 
     const thread_id = thread.data.id;
 
-    // Agregar todos los mensajes al thread
+    // Enviar todo el contexto al thread
     for (const msg of contexto) {
       await axios.post(
         `https://api.openai.com/v1/threads/${thread_id}/messages`,
@@ -172,7 +175,7 @@ app.post('/webhook', async (req, res) => {
       );
     }
 
-    // Ejecutar Assistant
+    // Ejecutar assistant
     const run = await axios.post(
       `https://api.openai.com/v1/threads/${thread_id}/runs`,
       { assistant_id: ASSISTANT_ID },
@@ -185,9 +188,9 @@ app.post('/webhook', async (req, res) => {
       }
     );
 
-    // Esperar resultado
-    let status = "queued";
-    while (status !== "completed" && status !== "failed") {
+    // Esperar respuesta
+    let status = 'queued';
+    while (status !== 'completed' && status !== 'failed') {
       await new Promise(resolve => setTimeout(resolve, 1000));
       const check = await axios.get(
         `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}`,
@@ -201,7 +204,8 @@ app.post('/webhook', async (req, res) => {
       status = check.data.status;
     }
 
-    if (status === "completed") {
+    // Obtener y guardar respuesta
+    if (status === 'completed') {
       const messages = await axios.get(
         `https://api.openai.com/v1/threads/${thread_id}/messages`,
         {
@@ -213,7 +217,7 @@ app.post('/webhook', async (req, res) => {
       );
 
       const respuesta = messages.data.data.find(m => m.role === 'assistant');
-      const texto = respuesta?.content?.[0]?.text?.value || "No hubo respuesta.";
+      const texto = respuesta?.content?.[0]?.text?.value || 'No hubo respuesta.';
 
       await enviarMensajeWhatsApp(phoneNumber, texto.slice(0, 4096), phone_id);
 
@@ -222,33 +226,33 @@ app.post('/webhook', async (req, res) => {
         [run.data.id, phoneNumber, 'dinurba', texto, Date.now() / 1000]
       );
     } else {
-      await enviarMensajeWhatsApp(phoneNumber, "❌ El Assistant falló al procesar tu mensaje.", phone_id);
+      await enviarMensajeWhatsApp(phoneNumber, '❌ El Assistant falló al procesar tu mensaje.', phone_id);
     }
 
   } catch (error) {
     const msg = error.response?.data?.error?.message || error.message;
-    console.error("❌ Error:", msg);
+    console.error('❌ Error:', msg);
     await enviarMensajeWhatsApp(phoneNumber, `❌ Error: ${msg}`, phone_id);
   }
 
   res.sendStatus(200);
 });
 
-// ======================= WEBHOOK GET =======================
+// ==================== WEBHOOK GET ====================
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
   if (mode && token && token === process.env.VERIFY_TOKEN) {
-    console.log("✅ Webhook verificado.");
+    console.log('✅ Webhook verificado.');
     res.status(200).send(challenge);
   } else {
     res.sendStatus(403);
   }
 });
 
-// ======================= INICIAR SERVIDOR =======================
+// ==================== INICIAR SERVIDOR ====================
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
 });
