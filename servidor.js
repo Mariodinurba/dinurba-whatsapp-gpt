@@ -249,6 +249,64 @@ app.post('/webhook', async (req, res) => {
               console.error('❌ Error ejecutando tool_call:', e);
             }
           }
+
+          // 👉 NUEVA FUNCIÓN: consultar_predio
+          if (tool.function?.name === 'consultar_predio') {
+            const { clave } = JSON.parse(tool.function.arguments);
+            try {
+              const respuesta = await axios.get(`http://localhost:8000/consulta?clave=${clave}`);
+              const datos = respuesta.data;
+
+              if (datos.error) {
+                await enviarMensajeWhatsApp(phoneNumber, `❌ No se encontró información para la clave catastral: ${clave}`, phone_id);
+              } else {
+                const mensaje = `📄 *Información del predio consultado:*\n\n` +
+                  `🔑 Clave: ${datos.clave_catastral}\n` +
+                  `👤 Propietario: ${datos.propietario}\n` +
+                  `📍 Dirección: ${datos.direccion}\n` +
+                  `🏘️ Colonia: ${datos.colonia}\n` +
+                  `📐 Superficie: ${datos.superficie}`;
+
+                await enviarMensajeWhatsApp(phoneNumber, mensaje, phone_id);
+              }
+
+              await axios.post(
+                `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}/submit_tool_outputs`,
+                {
+                  tool_outputs: [
+                    {
+                      tool_call_id: tool.id,
+                      output: "Consulta catastral completada correctamente."
+                    }
+                  ]
+                },
+                {
+                  headers: {
+                    Authorization: `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json',
+                    'OpenAI-Beta': 'assistants=v2'
+                  }
+                }
+              );
+
+              run = await axios.post(
+                `https://api.openai.com/v1/threads/${thread_id}/runs`,
+                { assistant_id: ASSISTANT_ID },
+                {
+                  headers: {
+                    Authorization: `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json',
+                    'OpenAI-Beta': 'assistants=v2'
+                  }
+                }
+              );
+
+              intentos = 0;
+            } catch (error) {
+              console.error("❌ Error al consultar predio:", error.message);
+              await enviarMensajeWhatsApp(phoneNumber, "❌ No se pudo consultar la clave catastral.", phone_id);
+            }
+          }
         }
       }
 
