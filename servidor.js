@@ -276,7 +276,7 @@ app.post('/webhook', async (req, res) => {
                   tool_outputs: [
                     {
                       tool_call_id: tool.id,
-                      output: "Consulta catastral completada correctamente."
+                      output: `Consulta realizada. Datos obtenidos:\nClave: ${datos.clave_catastral}\nPropietario: ${datos.propietario}\nDirección: ${datos.direccion}\nColonia: ${datos.colonia}\nSuperficie: ${datos.superficie}`
                     }
                   ]
                 },
