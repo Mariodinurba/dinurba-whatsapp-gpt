@@ -1,5 +1,3 @@
-// ¡Código corregido para evitar reenvíos automáticos del PDF!
-
 const express = require('express');
 const axios = require('axios');
 const sqlite3 = require('sqlite3');
@@ -59,32 +57,6 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
     }
   );
   return response.data.messages?.[0]?.id || null;
-};
-
-const enviarPDFWhatsApp = async (numero, urlPDF, nombreArchivo, phone_id) => {
-  try {
-    await axios.post(
-      `https://graph.facebook.com/v18.0/${phone_id}/messages`,
-      {
-        messaging_product: 'whatsapp',
-        to: numero,
-        type: 'document',
-        document: {
-          link: urlPDF,
-          filename: nombreArchivo
-        }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    console.log('📄 PDF enviado a', numero);
-  } catch (error) {
-    console.error('❌ Error al enviar PDF:', error.response?.data || error.message);
-  }
 };
 
 app.post('/webhook', async (req, res) => {
@@ -208,49 +180,6 @@ app.post('/webhook', async (req, res) => {
 
       if (check.data.required_action?.submit_tool_outputs) {
         for (const tool of check.data.required_action.submit_tool_outputs.tool_calls) {
-          if (tool.function?.name === 'enviar_pdf') {
-            try {
-              const { url, nombre } = JSON.parse(tool.function.arguments);
-              await enviarPDFWhatsApp(phoneNumber, url, nombre, phone_id);
-
-              await axios.post(
-                `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}/submit_tool_outputs`,
-                {
-                  tool_outputs: [
-                    {
-                      tool_call_id: tool.id,
-                      output: "PDF enviado correctamente."
-                    }
-                  ]
-                },
-                {
-                  headers: {
-                    Authorization: `Bearer ${OPENAI_API_KEY}`,
-                    'Content-Type': 'application/json',
-                    'OpenAI-Beta': 'assistants=v2'
-                  }
-                }
-              );
-
-              // 🔁 Reanudar el run para completarlo correctamente
-              run = await axios.post(
-                `https://api.openai.com/v1/threads/${thread_id}/runs`,
-                { assistant_id: ASSISTANT_ID },
-                {
-                  headers: {
-                    Authorization: `Bearer ${OPENAI_API_KEY}`,
-                    'Content-Type': 'application/json',
-                    'OpenAI-Beta': 'assistants=v2'
-                  }
-                }
-              );
-              intentos = 0;
-            } catch (e) {
-              console.error('❌ Error ejecutando tool_call:', e);
-            }
-          }
-
-          // 👉 NUEVA FUNCIÓN: consultar_predio
           if (tool.function?.name === 'consultar_predio') {
             const { clave } = JSON.parse(tool.function.arguments);
             try {
@@ -289,22 +218,9 @@ app.post('/webhook', async (req, res) => {
                 }
               );
 
-              run = await axios.post(
-                `https://api.openai.com/v1/threads/${thread_id}/runs`,
-                { assistant_id: ASSISTANT_ID },
-                {
-                  headers: {
-                    Authorization: `Bearer ${OPENAI_API_KEY}`,
-                    'Content-Type': 'application/json',
-                    'OpenAI-Beta': 'assistants=v2'
-                  }
-                }
-              );
-
               intentos = 0;
-            } catch (error) {
-              console.error("❌ Error al consultar predio:", error.message);
-              await enviarMensajeWhatsApp(phoneNumber, "❌ No se pudo consultar la clave catastral.", phone_id);
+            } catch (e) {
+              console.error('❌ Error ejecutando consultar_predio:', e.message);
             }
           }
         }
