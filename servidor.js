@@ -1,4 +1,4 @@
-// === servidor.js FINAL para producción ===
+// === servidor.js actualizado (mismo flujo + envío de URL al cliente) ===
 
 const express = require('express');
 const axios = require('axios');
@@ -14,7 +14,7 @@ app.use('/descargas', express.static(path.join(__dirname, 'archivos')));
 const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const ASSISTANT_ID = process.env.ASSISTANT_ID;
+const ASSISTANT_ID = 'asst_WXEwYWFnqSP60RLicaGonUIi';
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
 let db;
@@ -80,10 +80,8 @@ app.post('/webhook', async (req, res) => {
   try {
     const db = await openDB();
 
-    // Guardar conversación entrante
     await db.run('INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)', [wa_id, phoneNumber, 'user', messageText, timestamp]);
 
-    // Recuperar o crear thread en OpenAI
     let hilo = await db.get('SELECT thread_id FROM hilos WHERE numero = ?', [phoneNumber]);
     let thread_id;
 
@@ -101,7 +99,6 @@ app.post('/webhook', async (req, res) => {
       await db.run('INSERT INTO hilos (numero, thread_id) VALUES (?, ?)', [phoneNumber, thread_id]);
     }
 
-    // Enviar mensaje recibido al Assistant
     await axios.post(`https://api.openai.com/v1/threads/${thread_id}/messages`, { role: 'user', content: messageText }, {
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -110,7 +107,6 @@ app.post('/webhook', async (req, res) => {
       }
     });
 
-    // Ejecutar Assistant
     const run = await axios.post(`https://api.openai.com/v1/threads/${thread_id}/runs`, { assistant_id: ASSISTANT_ID }, {
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -136,7 +132,13 @@ app.post('/webhook', async (req, res) => {
           if (tool.function?.name === 'consultar_predio') {
             const { clave } = JSON.parse(tool.function.arguments);
             try {
-              const respuesta = await axios.get(`http://localhost:8000/consulta?clave=${clave}`);
+              const urlConsulta = `http://localhost:8000/consulta?clave=${clave}`;
+
+              // Enviar el URL al cliente
+              await enviarMensajeWhatsApp(phoneNumber, `🔗 Link de consulta generado:
+${urlConsulta}`, phone_id);
+
+              const respuesta = await axios.get(urlConsulta);
               const datos = respuesta.data;
 
               if (datos.error) {
@@ -178,7 +180,7 @@ app.post('/webhook', async (req, res) => {
               });
 
             } catch (error) {
-              console.error('❌ Error en consulta predio:', error.message);
+              console.error('❌ Error en la consulta del predio:', error.message);
               await enviarMensajeWhatsApp(phoneNumber, '❌ Error al consultar el predio.', phone_id);
             }
           }
@@ -189,22 +191,6 @@ app.post('/webhook', async (req, res) => {
       intentos++;
     }
 
-    if (status === 'completed') {
-      const messages = await axios.get(`https://api.openai.com/v1/threads/${thread_id}/messages`, {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          'OpenAI-Beta': 'assistants=v2'
-        }
-      });
-
-      const respuesta = messages.data.data.find(m => m.role === 'assistant');
-      const texto = respuesta?.content?.[0]?.text?.value || 'No hubo respuesta.';
-
-      const respuestaId = await enviarMensajeWhatsApp(phoneNumber, texto.slice(0, 4096), phone_id);
-
-      await db.run('INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)', [respuestaId, phoneNumber, 'dinurba', texto, Date.now() / 1000]);
-    }
-
   } catch (error) {
     const msg = error.response?.data?.error?.message || error.message;
     console.error('❌ Error general:', msg);
@@ -213,7 +199,6 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
-// Verificación de Webhook (cuando Meta valida)
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
