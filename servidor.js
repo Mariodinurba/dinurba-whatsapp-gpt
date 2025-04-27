@@ -1,5 +1,3 @@
-// === servidor.js COMPLETO Y ACTUALIZADO ===
-
 const express = require('express');
 const axios = require('axios');
 const sqlite3 = require('sqlite3');
@@ -33,14 +31,10 @@ const openDB = async () => {
         contenido TEXT,
         timestamp INTEGER
       );
+
       CREATE TABLE IF NOT EXISTS hilos (
         numero TEXT PRIMARY KEY,
         thread_id TEXT
-      );
-      CREATE TABLE IF NOT EXISTS runs (
-        thread_id TEXT PRIMARY KEY,
-        run_id TEXT,
-        status TEXT
       );
     `);
   }
@@ -63,22 +57,6 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
     }
   );
   return response.data.messages?.[0]?.id || null;
-};
-
-const esperarRunLibre = async (thread_id) => {
-  const db = await openDB();
-  let intento = 0;
-  let run;
-
-  while (intento < 20) {
-    run = await db.get('SELECT status FROM runs WHERE thread_id = ?', [thread_id]);
-    if (!run || run.status === 'completed' || run.status === 'failed') {
-      return;
-    }
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    intento++;
-  }
-  throw new Error('Timeout esperando que termine el run activo.');
 };
 
 app.post('/webhook', async (req, res) => {
@@ -148,8 +126,6 @@ app.post('/webhook', async (req, res) => {
       await db.run('INSERT INTO hilos (numero, thread_id) VALUES (?, ?)', [phoneNumber, thread_id]);
     }
 
-    await esperarRunLibre(thread_id);
-
     if (systemBlock) {
       await axios.post(
         `https://api.openai.com/v1/threads/${thread_id}/messages`,
@@ -176,7 +152,7 @@ app.post('/webhook', async (req, res) => {
       }
     );
 
-    const runResponse = await axios.post(
+    let run = await axios.post(
       `https://api.openai.com/v1/threads/${thread_id}/runs`,
       { assistant_id: ASSISTANT_ID },
       {
@@ -188,8 +164,95 @@ app.post('/webhook', async (req, res) => {
       }
     );
 
-    await db.run('INSERT OR REPLACE INTO runs (thread_id, run_id, status) VALUES (?, ?, ?)', [thread_id, runResponse.data.id, 'queued']);
+    let status = 'queued';
+    let intentos = 0;
+    while (status !== 'completed' && status !== 'failed' && intentos < 20) {
+      await new Promise(resolve => setTimeout(resolve, 800));
+      const check = await axios.get(
+        `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            'OpenAI-Beta': 'assistants=v2'
+          }
+        }
+      );
 
+      if (check.data.required_action?.submit_tool_outputs) {
+        for (const tool of check.data.required_action.submit_tool_outputs.tool_calls) {
+          if (tool.function?.name === 'consultar_predio') {
+            const { clave } = JSON.parse(tool.function.arguments);
+            try {
+              const respuesta = await axios.get(`http://localhost:8000/consulta?clave=${clave}`);
+              const datos = respuesta.data;
+
+              if (datos.error) {
+                await enviarMensajeWhatsApp(phoneNumber, `❌ No se encontró información para la clave catastral: ${clave}`, phone_id);
+              } else {
+                const mensaje = `📄 *Información del predio consultado:*\n\n` +
+                  `🔑 Clave: ${datos.clave_catastral}\n` +
+                  `👤 Propietario: ${datos.propietario}\n` +
+                  `📍 Dirección: ${datos.direccion}\n` +
+                  `🏘️ Colonia: ${datos.colonia}\n` +
+                  `📐 Superficie: ${datos.superficie}`;
+
+                await enviarMensajeWhatsApp(phoneNumber, mensaje, phone_id);
+              }
+
+              await axios.post(
+                `https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}/submit_tool_outputs`,
+                {
+                  tool_outputs: [
+                    {
+                      tool_call_id: tool.id,
+                      output: `Consulta realizada. Datos obtenidos:\nClave: ${datos.clave_catastral}\nPropietario: ${datos.propietario}\nDirección: ${datos.direccion}\nColonia: ${datos.colonia}\nSuperficie: ${datos.superficie}`
+                    }
+                  ]
+                },
+                {
+                  headers: {
+                    Authorization: `Bearer ${OPENAI_API_KEY}`,
+                    'Content-Type': 'application/json',
+                    'OpenAI-Beta': 'assistants=v2'
+                  }
+                }
+              );
+
+              intentos = 0;
+            } catch (e) {
+              console.error('❌ Error ejecutando consultar_predio:', e.message);
+            }
+          }
+        }
+      }
+
+      status = check.data.status;
+      intentos++;
+    }
+
+    if (status === 'completed') {
+      const messages = await axios.get(
+        `https://api.openai.com/v1/threads/${thread_id}/messages`,
+        {
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            'OpenAI-Beta': 'assistants=v2'
+          }
+        }
+      );
+
+      const respuesta = messages.data.data.find(m => m.role === 'assistant');
+      const texto = respuesta?.content?.[0]?.text?.value || 'No hubo respuesta.';
+
+      const respuestaId = await enviarMensajeWhatsApp(phoneNumber, texto.slice(0, 4096), phone_id);
+      await db.run(
+        'INSERT INTO conversaciones (wa_id, numero, rol, contenido, timestamp) VALUES (?, ?, ?, ?, ?)',
+        [respuestaId, phoneNumber, 'dinurba', texto, Date.now() / 1000]
+      );
+    } else {
+      console.log('🧠 RUN STATUS:', status);
+      await enviarMensajeWhatsApp(phoneNumber, '❌ El Assistant falló al procesar tu mensaje.', phone_id);
+    }
   } catch (error) {
     const msg = error.response?.data?.error?.message || error.message;
     console.error('❌ Error:', msg);
