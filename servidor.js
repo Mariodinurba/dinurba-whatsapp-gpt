@@ -13,7 +13,6 @@ const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ASSISTANT_ID = process.env.ASSISTANT_ID;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`; // URL base para generar enlaces
 
 let db;
 const openDB = async () => {
@@ -49,44 +48,6 @@ const enviarMensajeWhatsApp = async (numero, texto, phone_id) => {
       messaging_product: 'whatsapp',
       to: numero,
       text: { body: '💬 ' + texto }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    }
-  );
-  return response.data.messages?.[0]?.id || null;
-};
-
-// Función para enviar un enlace como mensaje interactivo por WhatsApp
-const enviarEnlaceWhatsApp = async (numero, titulo, descripcion, url, phone_id) => {
-  const response = await axios.post(
-    `https://graph.facebook.com/v18.0/${phone_id}/messages`,
-    {
-      messaging_product: 'whatsapp',
-      to: numero,
-      type: 'interactive',
-      interactive: {
-        type: 'button',
-        header: {
-          type: 'text',
-          text: '🔗 Enlace de consulta'
-        },
-        body: {
-          text: `*${titulo}*\n\n${descripcion}`
-        },
-        action: {
-          buttons: [
-            {
-              type: 'url',
-              url: url,
-              text: 'Ver consulta'
-            }
-          ]
-        }
-      }
     },
     {
       headers: {
@@ -236,16 +197,6 @@ app.post('/webhook', async (req, res) => {
                   `📐 Superficie: ${datos.superficie}`;
 
                 await enviarMensajeWhatsApp(phoneNumber, mensaje, phone_id);
-                
-                // Generar y enviar el enlace de consulta
-                const enlaceConsulta = `${BASE_URL}/consulta-publica?clave=${clave}`;
-                await enviarEnlaceWhatsApp(
-                  phoneNumber,
-                  `Consulta catastral: ${clave}`,
-                  `Accede a la información completa del predio con clave catastral ${clave}.`,
-                  enlaceConsulta,
-                  phone_id
-                );
               }
 
               await axios.post(
@@ -309,101 +260,6 @@ app.post('/webhook', async (req, res) => {
   }
 
   res.sendStatus(200);
-});
-
-// Nueva ruta para la consulta pública
-app.get('/consulta-publica', async (req, res) => {
-  const clave = req.query.clave;
-  if (!clave) {
-    return res.status(400).send('Se requiere una clave catastral');
-  }
-
-  try {
-    const respuesta = await axios.get(`http://localhost:8000/consulta?clave=${clave}`);
-    const datos = respuesta.data;
-
-    if (datos.error) {
-      return res.status(404).send(`No se encontró información para la clave catastral: ${clave}`);
-    }
-
-    // Envía una página HTML con la información del predio
-    res.send(`
-      <!DOCTYPE html>
-      <html lang="es">
-      <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Consulta Catastral | ${datos.clave_catastral}</title>
-          <style>
-              body {
-                  font-family: Arial, sans-serif;
-                  line-height: 1.6;
-                  max-width: 800px;
-                  margin: 0 auto;
-                  padding: 20px;
-                  background-color: #f5f5f5;
-              }
-              .container {
-                  background-color: white;
-                  border-radius: 10px;
-                  padding: 20px;
-                  box-shadow: 0 0 10px rgba(0,0,0,0.1);
-              }
-              h1 {
-                  color: #2c3e50;
-                  border-bottom: 1px solid #eee;
-                  padding-bottom: 10px;
-              }
-              .info-grid {
-                  display: grid;
-                  grid-template-columns: 1fr 2fr;
-                  gap: 10px;
-              }
-              .label {
-                  font-weight: bold;
-                  color: #555;
-              }
-              .value {
-                  color: #333;
-              }
-              .footer {
-                  margin-top: 30px;
-                  text-align: center;
-                  font-size: 0.9em;
-                  color: #777;
-              }
-          </style>
-      </head>
-      <body>
-          <div class="container">
-              <h1>Información Catastral</h1>
-              <div class="info-grid">
-                  <div class="label">Clave Catastral:</div>
-                  <div class="value">${datos.clave_catastral}</div>
-                  
-                  <div class="label">Propietario:</div>
-                  <div class="value">${datos.propietario}</div>
-                  
-                  <div class="label">Dirección:</div>
-                  <div class="value">${datos.direccion}</div>
-                  
-                  <div class="label">Colonia:</div>
-                  <div class="value">${datos.colonia}</div>
-                  
-                  <div class="label">Superficie:</div>
-                  <div class="value">${datos.superficie}</div>
-              </div>
-          </div>
-          <div class="footer">
-              <p>Esta información es de carácter público. Consulta realizada el ${new Date().toLocaleDateString()}.</p>
-          </div>
-      </body>
-      </html>
-    `);
-  } catch (error) {
-    console.error('Error al realizar consulta pública:', error.message);
-    res.status(500).send('Error al procesar la consulta');
-  }
 });
 
 app.get('/webhook', (req, res) => {
