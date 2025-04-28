@@ -184,6 +184,11 @@ app.post('/webhook', async (req, res) => {
             const { clave } = JSON.parse(tool.function.arguments);
             try {
               const respuesta = await axios.get(`http://localhost:8000/consulta?clave=${clave}`);
+              
+              // 🔥 Mandar el link de consulta por WhatsApp
+             await enviarMensajeWhatsApp(phoneNumber, `🔗 Link para consultar el predio:\n${urlConsulta}`, phone_id);
+
+              const respuesta = await axios.get(urlConsulta);
               const datos = respuesta.data;
 
               if (datos.error) {
