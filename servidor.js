@@ -197,10 +197,12 @@ app.post('/webhook', async (req, res) => {
         for (const tool of check.data.required_action.submit_tool_outputs.tool_calls) {
           if (tool.function?.name === 'consultar_predio') {
             const { clave } = JSON.parse(tool.function.arguments);
+            const urlConsulta = `http://localhost:8000/consulta?clave=${clave}`;
             console.log('🔍 Ejecutando consultar_predio para clave:', clave);
+            console.log('🌐 URL de consulta:', urlConsulta);
 
             try {
-              const respuesta = await axios.get(`http://localhost:8000/consulta?clave=${clave}`);
+              const respuesta = await axios.get(urlConsulta);
               const datos = respuesta.data;
               console.log('✅ Resultado de consulta_predio:', datos);
 
@@ -245,7 +247,15 @@ app.post('/webhook', async (req, res) => {
               console.log('📤 Resultado de consultar_predio enviado a OpenAI.');
               intentos = 0;
             } catch (e) {
-              console.error('❌ Error ejecutando consultar_predio:', e.message);
+              if (e.code === 'ECONNREFUSED') {
+                console.error('❌ Error de conexión: ECONNREFUSED - El servidor de consulta no está disponible.');
+              } else if (e.response?.status === 404) {
+                console.error('❌ Error 404: Recurso no encontrado en la consulta.');
+              } else if (e.code === 'ETIMEDOUT') {
+                console.error('❌ Error de conexión: ETIMEDOUT - Tiempo de espera agotado al conectar.');
+              } else {
+                console.error('❌ Error ejecutando consultar_predio:', e.message);
+              }
             }
           }
         }
