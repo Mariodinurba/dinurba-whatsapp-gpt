@@ -12,7 +12,7 @@ app.use('/descargas', express.static(path.join(__dirname, 'archivos')));
 const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const ASSISTANT_ID = 'asst_WXEwYWFnqSP60RLicaGonUIi';
+const ASSISTANT_ID = process.env.ASSISTANT_ID;
 
 let db;
 const openDB = async () => {
