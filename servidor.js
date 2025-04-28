@@ -1,4 +1,4 @@
-// === servidor.js actualizado (mismo flujo + envío de URL al cliente) ===
+// === servidor.js FINAL (igual que el que sí funciona, solo agrega envío de URL) ===
 
 const express = require('express');
 const axios = require('axios');
@@ -134,7 +134,7 @@ app.post('/webhook', async (req, res) => {
             try {
               const urlConsulta = `http://localhost:8000/consulta?clave=${clave}`;
 
-              // Enviar el URL al cliente
+              // ✉️ Enviar URL por WhatsApp (adicional, sin afectar flujo)
               await enviarMensajeWhatsApp(phoneNumber, `🔗 Link de consulta generado:
 ${urlConsulta}`, phone_id);
 
