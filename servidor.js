@@ -1,4 +1,4 @@
-// === servidor.js FINAL (igual que el que sí funciona, solo agrega envío de URL) ===
+// === servidor.js FINAL — corregido igual a tu flujo, agregando el envío del link ===
 
 const express = require('express');
 const axios = require('axios');
@@ -131,18 +131,19 @@ app.post('/webhook', async (req, res) => {
         for (const tool of check.data.required_action.submit_tool_outputs.tool_calls) {
           if (tool.function?.name === 'consultar_predio') {
             const { clave } = JSON.parse(tool.function.arguments);
-            try {
-              const urlConsulta = `http://localhost:8000/consulta?clave=${clave}`;
+            const urlConsulta = `http://localhost:8000/consulta?clave=${clave}`;
 
-              // ✉️ Enviar URL por WhatsApp (adicional, sin afectar flujo)
-              await enviarMensajeWhatsApp(phoneNumber, `🔗 Link de consulta generado:
+            // ✉️ Mandar link al cliente
+            await enviarMensajeWhatsApp(phoneNumber, `🔗 Link de consulta generado:
 ${urlConsulta}`, phone_id);
 
+            try {
               const respuesta = await axios.get(urlConsulta);
               const datos = respuesta.data;
 
               if (datos.error) {
                 await enviarMensajeWhatsApp(phoneNumber, `❌ No se encontró información para la clave: ${clave}`, phone_id);
+
                 await axios.post(`https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}/submit_tool_outputs`, {
                   tool_outputs: [
                     { tool_call_id: tool.id, output: 'No se encontró información disponible.' }
@@ -154,7 +155,8 @@ ${urlConsulta}`, phone_id);
                     'OpenAI-Beta': 'assistants=v2'
                   }
                 });
-                return;
+
+                continue;
               }
 
               const mensaje = `📄 *Información del predio:*
@@ -178,10 +180,20 @@ ${urlConsulta}`, phone_id);
                   'OpenAI-Beta': 'assistants=v2'
                 }
               });
-
             } catch (error) {
-              console.error('❌ Error en la consulta del predio:', error.message);
+              console.error('❌ Error en la consulta:', error.message);
               await enviarMensajeWhatsApp(phoneNumber, '❌ Error al consultar el predio.', phone_id);
+              await axios.post(`https://api.openai.com/v1/threads/${thread_id}/runs/${run.data.id}/submit_tool_outputs`, {
+                tool_outputs: [
+                  { tool_call_id: tool.id, output: 'Error en la consulta.' }
+                ]
+              }, {
+                headers: {
+                  Authorization: `Bearer ${OPENAI_API_KEY}`,
+                  'Content-Type': 'application/json',
+                  'OpenAI-Beta': 'assistants=v2'
+                }
+              });
             }
           }
         }
